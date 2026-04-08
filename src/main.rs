@@ -206,8 +206,34 @@ async fn main() -> anyhow::Result<()> {
             daemon::orchestrator::start_daemon(config_path, dag_path).await
         }
         Command::Stop => {
-            tracing::info!("Stopping sprint");
-            todo!("stop not yet implemented")
+            // Load the current sprint and cancel it
+            let state_files: Vec<_> = std::fs::read_dir("state")
+                .into_iter()
+                .flatten()
+                .flatten()
+                .filter(|e| e.path().extension().is_some_and(|ext| ext == "json"))
+                .filter(|e| !e.path().to_string_lossy().contains("feedback"))
+                .collect();
+
+            let latest = state_files
+                .iter()
+                .max_by_key(|e| e.metadata().ok().and_then(|m| m.modified().ok()));
+
+            if let Some(state_file) = latest {
+                let mut engine = dag::engine::DagEngine::resume_from_file(&state_file.path())?;
+                engine.set_state_file(state_file.path().to_str().unwrap());
+
+                let cancelled = engine.cancel_sprint()?;
+                println!("Sprint cancelled. {} tasks cancelled:", cancelled.len());
+                for id in &cancelled {
+                    println!("  {id}");
+                }
+                println!("\nCompleted tasks preserved. Open PRs labeled caloron:sprint-cancelled.");
+                println!("Run `caloron retro` for a partial retro on completed work.");
+            } else {
+                println!("No active sprint found.");
+            }
+            Ok(())
         }
         Command::Status => {
             let state_files: Vec<_> = std::fs::read_dir("state")
@@ -237,12 +263,78 @@ async fn main() -> anyhow::Result<()> {
             Ok(())
         }
         Command::Logs { role } => {
-            tracing::info!(role, "Tailing logs");
-            todo!("logs not yet implemented")
+            // Look for log files in state/logs/
+            let log_dir = Path::new("state").join("logs");
+            let log_file = log_dir.join(format!("{role}.log"));
+            if log_file.exists() {
+                let content = std::fs::read_to_string(&log_file)?;
+                // Print last 50 lines
+                let lines: Vec<&str> = content.lines().collect();
+                let start = lines.len().saturating_sub(50);
+                for line in &lines[start..] {
+                    println!("{line}");
+                }
+            } else {
+                println!("No logs found for agent '{role}'.");
+                println!("Log files are stored in state/logs/");
+                if log_dir.exists() {
+                    println!("\nAvailable logs:");
+                    for entry in std::fs::read_dir(&log_dir)?.flatten() {
+                        println!("  {}", entry.file_name().to_string_lossy());
+                    }
+                }
+            }
+            Ok(())
         }
         Command::Trace { task_id } => {
-            tracing::info!(task_id, "Tracing task");
-            todo!("trace not yet implemented")
+            // Load DAG state and show task history
+            let state_files: Vec<_> = std::fs::read_dir("state")
+                .into_iter()
+                .flatten()
+                .flatten()
+                .filter(|e| e.path().extension().is_some_and(|ext| ext == "json"))
+                .filter(|e| !e.path().to_string_lossy().contains("feedback"))
+                .collect();
+
+            let latest = state_files
+                .iter()
+                .max_by_key(|e| e.metadata().ok().and_then(|m| m.modified().ok()));
+
+            if let Some(state_file) = latest {
+                let engine = dag::engine::DagEngine::resume_from_file(&state_file.path())?;
+                let state = engine.state();
+
+                if let Some(ts) = state.tasks.get(&task_id) {
+                    println!("Task: {} — {}", ts.task.id, ts.task.title);
+                    println!("Assigned to: {}", ts.task.assigned_to);
+                    println!("Status: {:?}", ts.status);
+                    println!("Status changed: {}", ts.status_changed_at);
+                    if let Some(issue) = ts.task.github_issue_number {
+                        println!("Issue: #{issue}");
+                    }
+                    if !ts.pr_numbers.is_empty() {
+                        println!("PRs: {}", ts.pr_numbers.iter().map(|n| format!("#{n}")).collect::<Vec<_>>().join(", "));
+                    }
+                    if ts.intervention_count > 0 {
+                        println!("Interventions: {}", ts.intervention_count);
+                    }
+                    if !ts.task.depends_on.is_empty() {
+                        println!("Depends on: {}", ts.task.depends_on.join(", "));
+                    }
+                    if let Some(reviewer) = &ts.task.reviewed_by {
+                        println!("Reviewer: {reviewer}");
+                    }
+                } else {
+                    println!("Task '{task_id}' not found in DAG.");
+                    println!("\nAvailable tasks:");
+                    for id in state.tasks.keys() {
+                        println!("  {id}");
+                    }
+                }
+            } else {
+                println!("No sprint state found. Run `caloron start` first.");
+            }
+            Ok(())
         }
         Command::Retro { sprint_id } => {
             // Find the sprint state file
@@ -269,20 +361,51 @@ async fn main() -> anyhow::Result<()> {
             let engine = dag::engine::DagEngine::resume_from_file(Path::new(&state_path))?;
             let dag_state = engine.state();
 
-            // For now, create sample feedback from what we have.
-            // In production, feedback would be collected from GitHub comments during the sprint.
             println!("Retro for sprint: {}", dag_state.sprint.id);
-            println!("Loading feedback from sprint state...\n");
 
-            // Build empty feedback (no comments collected yet — Phase 4 stores them)
+            // [Fix #6] Load feedback from persisted buffer
+            let feedback_path = Path::new("state").join("feedback.jsonl");
+            let feedbacks: Vec<caloron_types::feedback::CaloronFeedback> = if feedback_path.exists() {
+                std::fs::read_to_string(&feedback_path)?
+                    .lines()
+                    .filter_map(|line| serde_json::from_str(line).ok())
+                    .collect()
+            } else {
+                println!("No feedback file found at state/feedback.jsonl");
+                vec![]
+            };
+            println!("Loaded {} feedback entries\n", feedbacks.len());
+
             let feedback = retro::collector::SprintFeedback::from_feedbacks(
                 &dag_state.sprint.id,
-                vec![], // TODO: load from stored feedback buffer
+                feedbacks,
                 dag_state,
             );
 
             let analysis = retro::analyzer::analyze(&feedback);
-            let report = retro::report::generate_report(&feedback, &analysis);
+            let kpis = retro::kpis::compute_kpis(&feedback);
+            let improvements = retro::improvements::generate_improvements(&feedback, &analysis, &kpis);
+
+            // Load learnings store for trend comparison
+            let learnings_path = Path::new("state").join("learnings.json");
+            let mut learnings = retro::learnings::LearningsStore::load(&learnings_path)?;
+            let trends = learnings.previous_kpis().map(|prev| retro::kpis::compare_kpis(prev, &kpis));
+
+            // Generate full report with KPIs, trends, and improvements
+            let report = retro::report::generate_full_report(
+                &feedback,
+                &analysis,
+                &kpis,
+                trends.as_deref(),
+                &improvements,
+            );
+
+            // Update learnings store
+            learnings.record_kpis(kpis);
+            learnings.add_pending_improvements(improvements.clone());
+            let latest_kpis = learnings.kpi_history.last().unwrap().clone();
+            learnings.derive_learnings(&dag_state.sprint.id, &improvements, &latest_kpis);
+            learnings.save(&learnings_path)?;
 
             // Write report
             let report_path = format!("retro/sprint-{}.md", dag_state.sprint.id);
@@ -290,12 +413,36 @@ async fn main() -> anyhow::Result<()> {
 
             println!("{report}");
             println!("Report written to {report_path}");
+            println!("Learnings updated at {}", learnings_path.display());
+            if !improvements.is_empty() {
+                println!("{} improvements pending — see report for details", improvements.len());
+            }
 
             Ok(())
         }
         Command::Agent { command } => match command {
             AgentCommand::List => {
-                todo!("agent list not yet implemented")
+                let registry = agent::registry::default_registry();
+                println!("Built-in agent personalities:");
+                for (name, p) in &registry.personalities {
+                    println!("  {name:<20} {}", p.description);
+                }
+
+                // Also list YAML files in examples/agents/ and agents/
+                for dir in &["examples/agents", "agents"] {
+                    let dir = Path::new(dir);
+                    if dir.exists() {
+                        println!("\nDefinitions in {}:", dir.display());
+                        for entry in std::fs::read_dir(dir)?.flatten() {
+                            let path = entry.path();
+                            if path.extension().is_some_and(|e| e == "yaml" || e == "yml") {
+                                let name = path.file_stem().unwrap().to_string_lossy();
+                                println!("  {name:<20} {}", path.display());
+                            }
+                        }
+                    }
+                }
+                Ok(())
             }
             AgentCommand::Validate { file } => {
                 let config_path = Path::new("caloron.toml");

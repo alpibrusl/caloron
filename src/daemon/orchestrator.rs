@@ -7,15 +7,18 @@ use anyhow::{Context, Result};
 use tokio::sync::Mutex;
 
 use caloron_types::config::CaloronConfig;
+use caloron_types::feedback::CaloronFeedback;
 
 use crate::agent::spawner::AgentSpawner;
+use crate::config;
 use crate::dag::engine::DagEngine;
 use crate::daemon::socket::DaemonSocket;
 use crate::daemon::state::DaemonState;
 use crate::git::GitHubClient;
 use crate::git::monitor::{EventHandler, OrchestratorAction};
+use crate::noether::client::NoetherService;
 use crate::supervisor::health_monitor::{HealthMonitor, HealthMonitorConfig};
-use crate::supervisor::interventions::{InterventionDecider, InterventionTracker, InterventionAction};
+use crate::supervisor::interventions::{InterventionAction, InterventionDecider, InterventionTracker};
 
 /// The main orchestration loop that ties all components together.
 pub struct Orchestrator {
@@ -26,6 +29,16 @@ pub struct Orchestrator {
     spawner: Arc<Mutex<AgentSpawner>>,
     health_monitor: HealthMonitor,
     intervention_tracker: InterventionTracker,
+    socket_path: PathBuf,
+    repo_root: PathBuf,
+    /// Agent definitions loaded from meta repo, keyed by agent ID.
+    agent_defs: HashMap<String, caloron_types::agent::AgentDefinition>,
+    /// Credentials to inject into agents.
+    credentials: HashMap<String, String>,
+    /// Collected feedback for retro (persisted to disk).
+    feedback_buffer: Vec<CaloronFeedback>,
+    /// Noether service (if enabled).
+    noether: Option<NoetherService>,
 }
 
 impl Orchestrator {
@@ -39,12 +52,37 @@ impl Orchestrator {
     ) -> Self {
         let state = DaemonState::new(config.clone());
 
-        let spawner = AgentSpawner::new(config.clone(), repo_root, socket_path);
+        // [Fix #5] Pass the actual socket path to the spawner so agents connect
+        // to the right socket.
+        let spawner = AgentSpawner::new(config.clone(), repo_root.clone(), socket_path.clone());
 
         let health_config = HealthMonitorConfig {
             check_interval: Duration::from_secs(config.github.polling_interval_seconds as u64),
             max_review_cycles: config.supervisor.max_review_cycles,
             ..Default::default()
+        };
+
+        // Collect credentials from environment for agent injection
+        let mut credentials = HashMap::new();
+        if let Ok(token) = std::env::var(&config.github.token_env) {
+            credentials.insert("GITHUB_TOKEN".into(), token);
+        }
+        if let Ok(key) = std::env::var(&config.llm.api_key_env) {
+            credentials.insert("ANTHROPIC_API_KEY".into(), key);
+        }
+
+        // [Fix #8] Initialize Noether if enabled
+        let noether = if config.noether.enabled {
+            let svc = NoetherService::new(&config.noether.endpoint);
+            if svc.is_available() {
+                tracing::info!("Noether service connected");
+                Some(svc)
+            } else {
+                tracing::warn!("Noether enabled but not available");
+                None
+            }
+        } else {
+            None
         };
 
         Self {
@@ -55,7 +93,35 @@ impl Orchestrator {
             spawner: Arc::new(Mutex::new(spawner)),
             health_monitor: HealthMonitor::new(health_config),
             intervention_tracker: InterventionTracker::new(),
+            socket_path,
+            repo_root,
+            agent_defs: HashMap::new(),
+            credentials,
+            feedback_buffer: Vec::new(),
+            noether,
         }
+    }
+
+    /// Load agent definitions from the DAG's agent nodes.
+    pub fn load_agent_definitions(&mut self) -> Result<()> {
+        let dag = self.dag.try_lock().unwrap();
+        for (agent_id, agent_node) in &dag.state().agents {
+            let def_path = self.repo_root.join(&agent_node.definition_path);
+            if def_path.exists() {
+                match config::load_agent_definition(&def_path, &self.config) {
+                    Ok(def) => {
+                        tracing::info!(agent_id, path = %def_path.display(), "Loaded agent definition");
+                        self.agent_defs.insert(agent_id.clone(), def);
+                    }
+                    Err(e) => {
+                        tracing::warn!(agent_id, error = %e, "Failed to load agent definition — will use defaults");
+                    }
+                }
+            } else {
+                tracing::debug!(agent_id, path = %def_path.display(), "Agent definition not found — will use defaults");
+            }
+        }
+        Ok(())
     }
 
     /// Run the main orchestration loop.
@@ -66,17 +132,22 @@ impl Orchestrator {
         };
         tracing::info!(sprint_id, "Starting orchestration loop");
 
+        // Load saved feedback buffer
+        self.load_feedback_buffer();
+
         // Ensure labels exist
         if let Err(e) = self.github.ensure_labels().await {
             tracing::warn!(error = %e, "Could not ensure labels — continuing anyway");
         }
 
+        // [Fix #3] Sync DAG state to DaemonState for socket/dashboard queries
+        self.sync_dag_to_state().await;
+
         // Spawn agents for initially ready tasks
         self.spawn_ready_tasks().await?;
 
         // Start the daemon socket for harness communication
-        let socket_path = PathBuf::from(format!("/run/caloron/{sprint_id}.sock"));
-        let socket = DaemonSocket::new(socket_path, self.state.clone());
+        let socket = DaemonSocket::new(self.socket_path.clone(), self.state.clone());
         let socket_handle = tokio::spawn(async move {
             if let Err(e) = socket.listen().await {
                 tracing::error!(error = %e, "Socket server error");
@@ -103,8 +174,19 @@ impl Orchestrator {
                 }
             }
 
+            // [Fix #3] Keep DaemonState in sync after each event cycle
+            self.sync_dag_to_state().await;
+
             // Run health checks
             self.run_health_checks().await;
+
+            // Update dashboard
+            if let Err(e) = crate::dashboard::update_sprint_summary(
+                &self.repo_root,
+                self.dag.lock().await.state(),
+            ) {
+                tracing::debug!(error = %e, "Failed to update dashboard");
+            }
 
             // Check if sprint is complete
             {
@@ -117,6 +199,9 @@ impl Orchestrator {
 
             tokio::time::sleep(poll_interval).await;
         }
+
+        // Persist feedback buffer on clean exit
+        self.save_feedback_buffer();
 
         socket_handle.abort();
         Ok(())
@@ -134,7 +219,6 @@ impl Orchestrator {
 
     /// Execute an orchestrator action. Flattens Multiple into a sequential list.
     async fn execute_action(&mut self, action: OrchestratorAction) -> Result<()> {
-        // Flatten Multiple into a sequential queue to avoid async recursion
         let actions = match action {
             OrchestratorAction::Multiple(inner) => inner,
             single => vec![single],
@@ -149,6 +233,7 @@ impl Orchestrator {
         match action {
             OrchestratorAction::None => {}
 
+            // [Fix #1] Actually spawn agents
             OrchestratorAction::SpawnAgent {
                 task_id,
                 agent_def_id,
@@ -156,15 +241,49 @@ impl Orchestrator {
             } => {
                 tracing::info!(task_id, agent_def_id, issue_number, "Spawning agent for task");
 
-                // Add assignment label and comment
                 let _ = self.github.add_label(issue_number, "caloron:assigned").await;
                 let comment = format!("@caloron-agent-{agent_def_id} has been assigned this task.");
                 let _ = self.github.create_comment(issue_number, &comment).await;
 
-                // TODO: Load agent definition, spawn via spawner
-                // This requires loading the YAML from caloron-meta and calling spawner.spawn()
-                // For now, log the intent
-                tracing::info!(agent_def_id, task_id, "Agent spawn requested");
+                // Get the agent definition (or create a minimal one)
+                let agent_def = self.agent_defs.get(&agent_def_id).cloned().unwrap_or_else(|| {
+                    tracing::warn!(agent_def_id, "No agent definition loaded — using minimal defaults");
+                    caloron_types::agent::AgentDefinition {
+                        name: agent_def_id.clone(),
+                        version: "1.0".into(),
+                        description: format!("Auto-generated for {agent_def_id}"),
+                        llm: caloron_types::agent::LlmConfig {
+                            model: self.config.llm.resolve_model("default"),
+                            max_tokens: 8192,
+                            temperature: 0.2,
+                        },
+                        system_prompt: format!("You are agent {agent_def_id}. Complete the task in your assigned GitHub issue."),
+                        tools: vec!["bash".into(), "github_mcp".into()],
+                        mcps: vec![],
+                        nix: caloron_types::agent::NixConfig::default(),
+                        credentials: vec!["GITHUB_TOKEN".into(), "ANTHROPIC_API_KEY".into()],
+                        stall_threshold_minutes: self.config.supervisor.stall_default_threshold_minutes,
+                        max_review_cycles: self.config.supervisor.max_review_cycles,
+                    }
+                });
+
+                let sprint_id = self.dag.lock().await.sprint_id().to_string();
+
+                // Spawn the agent process
+                let mut spawner = self.spawner.lock().await;
+                match spawner
+                    .spawn(&agent_def_id, &agent_def, &task_id, &sprint_id, &self.credentials)
+                    .await
+                {
+                    Ok(health) => {
+                        // [Fix #4] Register agent in health map
+                        self.state.register_agent(health).await;
+                        tracing::info!(agent_def_id, task_id, "Agent spawned and registered");
+                    }
+                    Err(e) => {
+                        tracing::error!(agent_def_id, task_id, error = %e, "Failed to spawn agent");
+                    }
+                }
             }
 
             OrchestratorAction::AssignReviewer {
@@ -184,19 +303,22 @@ impl Orchestrator {
 
             OrchestratorAction::NotifyAgent {
                 agent_id,
-                issue_number,
-                message,
+                issue_number: _,
+                message: _,
             } => {
-                tracing::info!(agent_id, issue_number, "Notifying agent");
-                // Reset stall timer
-                self.state.update_agent(&agent_id, |health| {
-                    health.record_git_event();
-                }).await;
+                tracing::info!(agent_id, "Notifying agent");
+                self.state
+                    .update_agent(&agent_id, |health| {
+                        health.record_git_event();
+                    })
+                    .await;
             }
 
+            // [Fix #6] Store feedback in buffer and persist
             OrchestratorAction::StoreFeedback { task_id, feedback } => {
                 tracing::info!(task_id, "Storing feedback for retro");
-                // TODO: Store in retro buffer (Phase 6)
+                self.feedback_buffer.push(feedback);
+                self.save_feedback_buffer();
             }
 
             OrchestratorAction::TaskCompleted {
@@ -207,15 +329,24 @@ impl Orchestrator {
             } => {
                 tracing::info!(task_id, pr_number, "Task completed");
 
-                // Completion chain (Addendum E2):
                 let _ = self.github.add_label(issue_number, "caloron:done").await;
                 let comment = format!("Completed via PR #{pr_number}");
                 let _ = self.github.close_issue(issue_number, &comment).await;
 
-                // Spawn agents for newly unblocked tasks
+                // Destroy the agent for the completed task
+                let sprint_id = self.dag.lock().await.sprint_id().to_string();
+                {
+                    let dag = self.dag.lock().await;
+                    if let Some(ts) = dag.state().tasks.get(&task_id) {
+                        let agent_id = &ts.task.assigned_to;
+                        let mut spawner = self.spawner.lock().await;
+                        let _ = spawner.destroy(agent_id, &sprint_id).await;
+                        self.state.unregister_agent(agent_id).await;
+                    }
+                }
+
                 for unblocked_id in unblocked {
-                    tracing::info!(unblocked_id, "Task unblocked");
-                    // These will be picked up on the next poll when issues are created
+                    tracing::info!(unblocked_id, "Task unblocked — will spawn on next cycle");
                 }
             }
 
@@ -247,16 +378,16 @@ impl Orchestrator {
 
     /// Spawn agents for all currently ready tasks.
     async fn spawn_ready_tasks(&mut self) -> Result<()> {
-        let ready: Vec<String> = {
+        let ready: Vec<(String, String)> = {
             let dag = self.dag.lock().await;
             dag.get_ready_tasks()
                 .iter()
-                .map(|ts| ts.task.id.clone())
+                .map(|ts| (ts.task.id.clone(), ts.task.assigned_to.clone()))
                 .collect()
         };
 
-        for task_id in ready {
-            tracing::info!(task_id, "Task is ready — awaiting issue creation to spawn agent");
+        for (task_id, agent_id) in ready {
+            tracing::info!(task_id, agent_id, "Ready task — creating issue to trigger spawn");
         }
 
         Ok(())
@@ -273,11 +404,8 @@ impl Orchestrator {
                 .and_then(|h| h.current_task_id.clone())
                 .unwrap_or_default();
 
-            let action = InterventionDecider::decide(
-                &result,
-                &task_id,
-                &self.intervention_tracker,
-            );
+            let action =
+                InterventionDecider::decide(&result, &task_id, &self.intervention_tracker);
 
             tracing::warn!(
                 agent_id = result.agent_id,
@@ -286,58 +414,112 @@ impl Orchestrator {
                 "Health check failed"
             );
 
-            // Record the intervention
-            self.intervention_tracker.record(
-                &task_id,
-                &result.agent_id,
-                action.clone(),
-            );
+            self.intervention_tracker
+                .record(&task_id, &result.agent_id, action.clone());
 
-            // Execute the intervention
+            // [Fix #9] Look up issue number from DAG for escalation
+            let issue_number = {
+                let dag = self.dag.lock().await;
+                dag.state()
+                    .tasks
+                    .get(&task_id)
+                    .and_then(|ts| ts.task.github_issue_number)
+                    .unwrap_or(0)
+            };
+
             match action {
                 InterventionAction::Probe => {
-                    if let Some(health) = agents.get(&result.agent_id) {
-                        if let Some(issue) = health.current_task_id.as_ref().and_then(|_| {
-                            // TODO: get issue number from DAG
-                            None::<u64>
-                        }) {
-                            let minutes = (chrono::Utc::now() - health.last_git_event)
-                                .num_minutes() as u64;
+                    if issue_number > 0 {
+                        if let Some(health) = agents.get(&result.agent_id) {
+                            let minutes =
+                                (chrono::Utc::now() - health.last_git_event).num_minutes() as u64;
                             let comment = crate::supervisor::interventions::probe_comment(
                                 &result.agent_id,
                                 minutes,
                             );
-                            let _ = self.github.create_comment(issue, &comment).await;
+                            let _ = self.github.create_comment(issue_number, &comment).await;
                         }
                     }
                 }
                 InterventionAction::Restart => {
-                    tracing::info!(
-                        agent_id = result.agent_id,
-                        "Restarting agent"
-                    );
-                    // TODO: Call spawner.restart() with agent definition and credentials
+                    tracing::info!(agent_id = result.agent_id, "Restarting agent");
+                    let sprint_id = self.dag.lock().await.sprint_id().to_string();
+                    if let Some(agent_def) = self.agent_defs.get(&result.agent_id) {
+                        let mut spawner = self.spawner.lock().await;
+                        match spawner
+                            .restart(
+                                &result.agent_id,
+                                agent_def,
+                                &task_id,
+                                &sprint_id,
+                                &self.credentials,
+                            )
+                            .await
+                        {
+                            Ok(health) => {
+                                self.state.register_agent(health).await;
+                                tracing::info!(agent_id = result.agent_id, "Agent restarted");
+                            }
+                            Err(e) => {
+                                tracing::error!(
+                                    agent_id = result.agent_id,
+                                    error = %e,
+                                    "Failed to restart agent"
+                                );
+                            }
+                        }
+                    }
                 }
+                // [Fix #9] Use actual issue number in escalation
                 InterventionAction::EscalateCredentials { tool } => {
-                    let escalation = crate::supervisor::escalation::EscalationIssue::CredentialsFailure {
-                        agent_role: result.agent_id.clone(),
-                        tool,
-                        task_issue_number: 0, // TODO: look up from DAG
-                        error_count: agents.get(&result.agent_id).map(|h| h.consecutive_errors).unwrap_or(0),
-                    };
+                    let escalation =
+                        crate::supervisor::escalation::EscalationIssue::CredentialsFailure {
+                            agent_role: result.agent_id.clone(),
+                            tool,
+                            task_issue_number: issue_number,
+                            error_count: agents
+                                .get(&result.agent_id)
+                                .map(|h| h.consecutive_errors)
+                                .unwrap_or(0),
+                        };
                     let _ = crate::supervisor::escalation::EscalationGateway::escalate(
                         &self.github,
                         &escalation,
-                    ).await;
+                    )
+                    .await;
                 }
                 InterventionAction::EscalateCapability => {
-                    tracing::error!(
-                        agent_id = result.agent_id,
-                        "Task beyond agent capability — escalating"
-                    );
+                    let escalation =
+                        crate::supervisor::escalation::EscalationIssue::TaskBeyondCapability {
+                            agent_role: result.agent_id.clone(),
+                            task_issue_number: issue_number,
+                            task_title: task_id.clone(),
+                            attempts: self
+                                .intervention_tracker
+                                .history_for_task(&task_id)
+                                .len(),
+                            failure_pattern: format!("{:?}", result.verdict),
+                        };
+                    let _ = crate::supervisor::escalation::EscalationGateway::escalate(
+                        &self.github,
+                        &escalation,
+                    )
+                    .await;
                 }
                 InterventionAction::EscalateReviewLoop { pr_id } => {
-                    tracing::warn!(pr_id, "Review loop — escalating");
+                    let escalation =
+                        crate::supervisor::escalation::EscalationIssue::ReviewLoop {
+                            pr_number: pr_id.parse().unwrap_or(0),
+                            reviewer_id: result.agent_id.clone(),
+                            author_id: "unknown".into(),
+                            cycles: 0,
+                            analysis: format!("{:?}", result.verdict),
+                        };
+                    let _ = crate::supervisor::escalation::EscalationGateway::escalate(
+                        &self.github,
+                        &escalation,
+                    )
+                    .await;
                 }
                 InterventionAction::Reassign { new_agent_id } => {
                     tracing::info!(
@@ -347,11 +529,7 @@ impl Orchestrator {
                     );
                 }
                 InterventionAction::Block { reason } => {
-                    tracing::warn!(
-                        agent_id = result.agent_id,
-                        reason,
-                        "Blocking task"
-                    );
+                    tracing::warn!(agent_id = result.agent_id, reason, "Blocking task");
                     if !task_id.is_empty() {
                         let mut dag = self.dag.lock().await;
                         let _ = dag.task_blocked(&task_id, &reason);
@@ -360,19 +538,68 @@ impl Orchestrator {
             }
         }
     }
+
+    /// [Fix #3] Sync DAG state to DaemonState so socket/dashboard can read it.
+    async fn sync_dag_to_state(&self) {
+        let dag = self.dag.lock().await;
+        self.state.set_dag(dag.state().clone()).await;
+    }
+
+    /// [Fix #6] Load feedback buffer from disk.
+    fn load_feedback_buffer(&mut self) {
+        let path = self.feedback_file_path();
+        if path.exists() {
+            match std::fs::read_to_string(&path) {
+                Ok(content) => {
+                    for line in content.lines() {
+                        if let Ok(fb) = serde_json::from_str::<CaloronFeedback>(line) {
+                            self.feedback_buffer.push(fb);
+                        }
+                    }
+                    tracing::info!(
+                        count = self.feedback_buffer.len(),
+                        "Loaded feedback buffer"
+                    );
+                }
+                Err(e) => {
+                    tracing::warn!(error = %e, "Failed to load feedback buffer");
+                }
+            }
+        }
+    }
+
+    /// [Fix #6] Save feedback buffer to disk (JSONL format).
+    fn save_feedback_buffer(&self) {
+        let path = self.feedback_file_path();
+        if let Some(parent) = path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        let content: String = self
+            .feedback_buffer
+            .iter()
+            .filter_map(|fb| serde_json::to_string(fb).ok())
+            .collect::<Vec<_>>()
+            .join("\n");
+        if let Err(e) = std::fs::write(&path, content) {
+            tracing::warn!(error = %e, "Failed to save feedback buffer");
+        }
+    }
+
+    fn feedback_file_path(&self) -> PathBuf {
+        self.repo_root.join("state").join("feedback.jsonl")
+    }
 }
 
 /// Entry point: load config and DAG, create orchestrator, and run.
 pub async fn start_daemon(config_path: &Path, dag_path: &Path) -> Result<()> {
     let config = crate::config::load_config(config_path)?;
 
-    let dag = DagEngine::load_from_file(dag_path)
-        .context("Failed to load DAG")?;
+    // [Fix #2] Load DAG and set state file for persistence
+    let mut dag = DagEngine::load_from_file(dag_path).context("Failed to load DAG")?;
 
     let sprint_id = dag.sprint_id().to_string();
-
-    // Set up state persistence
     let state_file = format!("state/sprint-{sprint_id}.json");
+    dag.set_state_file(&state_file);
 
     let token = std::env::var(&config.github.token_env)
         .with_context(|| format!("Missing env var: {}", config.github.token_env))?;
@@ -399,6 +626,11 @@ pub async fn start_daemon(config_path: &Path, dag_path: &Path) -> Result<()> {
 
     let mut orchestrator = Orchestrator::new(config, dag, github, repo_root, socket_path);
 
-    tracing::info!(sprint_id, "Daemon starting");
+    // Load agent definitions from the DAG
+    if let Err(e) = orchestrator.load_agent_definitions() {
+        tracing::warn!(error = %e, "Some agent definitions could not be loaded");
+    }
+
+    tracing::info!(sprint_id, state_file, "Daemon starting");
     orchestrator.run().await
 }
