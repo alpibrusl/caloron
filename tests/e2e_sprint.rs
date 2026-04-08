@@ -26,17 +26,17 @@ fn test_e2e_sprint_dag_lifecycle() {
             AgentNode {
                 id: "dev-1".into(),
                 role: "api-developer".into(),
-                definition_path: "agents/api-developer.yaml".into(),
+                definition_path: "agents/api-developer.yaml".into(), spec: None,
             },
             AgentNode {
                 id: "dev-2".into(),
                 role: "api-developer".into(),
-                definition_path: "agents/api-developer.yaml".into(),
+                definition_path: "agents/api-developer.yaml".into(), spec: None,
             },
             AgentNode {
                 id: "rev-1".into(),
                 role: "code-reviewer".into(),
-                definition_path: "agents/code-reviewer.yaml".into(),
+                definition_path: "agents/code-reviewer.yaml".into(), spec: None,
             },
         ],
         tasks: vec![
@@ -168,7 +168,7 @@ fn test_e2e_sprint_cancellation() {
             AgentNode {
                 id: "dev-1".into(),
                 role: "developer".into(),
-                definition_path: "a.yaml".into(),
+                definition_path: "a.yaml".into(), spec: None,
             },
         ],
         tasks: vec![
@@ -291,7 +291,7 @@ fn test_e2e_dag_persistence_roundtrip() {
         agents: vec![AgentNode {
             id: "dev-1".into(),
             role: "developer".into(),
-            definition_path: "a.yaml".into(),
+            definition_path: "a.yaml".into(), spec: None,
         }],
         tasks: vec![
             Task {

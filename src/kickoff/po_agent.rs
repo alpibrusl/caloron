@@ -28,6 +28,29 @@ When creating issues, always include:
 - An "Error handling" section for tasks involving external APIs
 - A "Dependencies" section linking to other issues
 
+For each agent in the DAG, specify a role spec with:
+- personality: developer, qa, reviewer, architect, designer, ux-researcher, devops
+- capabilities: list from [code-writing, testing, rust, python, nodejs, frontend, browser-research, noether]
+- model: "balanced" (default), "strong" (for complex reasoning), "fast" (for simple tasks)
+- framework: "claude-code" (default)
+- extra_instructions: task-specific context (e.g. "Use OR-tools for optimization", "Focus on edge cases")
+
+Example agent in the DAG:
+```json
+{
+  "id": "ds-1",
+  "role": "data-scientist",
+  "definition_path": "",
+  "spec": {
+    "personality": "developer",
+    "capabilities": ["code-writing", "python", "testing"],
+    "model": "strong",
+    "framework": "claude-code",
+    "extra_instructions": "You are a data scientist. Use pandas and scikit-learn."
+  }
+}
+```
+
 Your DAG must be valid JSON matching the Caloron dag format.
 Never start the sprint until the human has explicitly approved the DAG.
 
@@ -244,8 +267,8 @@ mod tests {
                 max_duration_hours: 24,
             },
             agents: vec![
-                AgentNode { id: "dev-1".into(), role: "developer".into(), definition_path: "a.yaml".into() },
-                AgentNode { id: "rev-1".into(), role: "reviewer".into(), definition_path: "r.yaml".into() },
+                AgentNode { id: "dev-1".into(), role: "developer".into(), definition_path: "a.yaml".into(), spec: None },
+                AgentNode { id: "rev-1".into(), role: "reviewer".into(), definition_path: "r.yaml".into(), spec: None },
             ],
             tasks: vec![
                 Task {

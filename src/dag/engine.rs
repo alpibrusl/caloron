@@ -389,9 +389,9 @@ mod tests {
                 max_duration_hours: 24,
             },
             agents: vec![
-                AgentNode { id: "a1".into(), role: "dev".into(), definition_path: "a.yaml".into() },
-                AgentNode { id: "a2".into(), role: "dev".into(), definition_path: "a.yaml".into() },
-                AgentNode { id: "r1".into(), role: "reviewer".into(), definition_path: "r.yaml".into() },
+                AgentNode { id: "a1".into(), role: "dev".into(), definition_path: "a.yaml".into(), spec: None },
+                AgentNode { id: "a2".into(), role: "dev".into(), definition_path: "a.yaml".into(), spec: None },
+                AgentNode { id: "r1".into(), role: "reviewer".into(), definition_path: "r.yaml".into(), spec: None },
             ],
             tasks: vec![
                 Task {

@@ -102,25 +102,40 @@ impl Orchestrator {
         }
     }
 
-    /// Load agent definitions from the DAG's agent nodes.
+    /// Load agent definitions from the DAG — resolves specs via the agent generator,
+    /// or falls back to loading YAML from definition_path.
     pub fn load_agent_definitions(&mut self) -> Result<()> {
         let dag = self.dag.try_lock().unwrap();
-        for (agent_id, agent_node) in &dag.state().agents {
-            let def_path = self.repo_root.join(&agent_node.definition_path);
-            if def_path.exists() {
-                match config::load_agent_definition(&def_path, &self.config) {
-                    Ok(def) => {
-                        tracing::info!(agent_id, path = %def_path.display(), "Loaded agent definition");
-                        self.agent_defs.insert(agent_id.clone(), def);
-                    }
-                    Err(e) => {
-                        tracing::warn!(agent_id, error = %e, "Failed to load agent definition — will use defaults");
-                    }
-                }
-            } else {
-                tracing::debug!(agent_id, path = %def_path.display(), "Agent definition not found — will use defaults");
+        let dag_snapshot = dag.state().clone();
+        drop(dag); // release lock before I/O
+
+        // Build the full DAG struct for the resolver
+        let dag_for_resolver = caloron_types::dag::Dag {
+            sprint: dag_snapshot.sprint.clone(),
+            agents: dag_snapshot.agents.values().cloned().collect(),
+            tasks: dag_snapshot.tasks.values().map(|ts| ts.task.clone()).collect(),
+            review_policy: caloron_types::dag::ReviewPolicy {
+                required_approvals: 1,
+                auto_merge: true,
+                max_review_cycles: self.config.supervisor.max_review_cycles,
+            },
+            escalation: caloron_types::dag::EscalationConfig {
+                stall_threshold_minutes: self.config.supervisor.stall_default_threshold_minutes,
+                supervisor_id: "supervisor".into(),
+                human_contact: self.config.supervisor.escalation_method.clone(),
+            },
+        };
+
+        match crate::kickoff::resolver::resolve_agents(&dag_for_resolver, &self.repo_root) {
+            Ok(defs) => {
+                tracing::info!(count = defs.len(), "Resolved agent definitions");
+                self.agent_defs = defs;
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, "Agent resolution failed — falling back to defaults");
             }
         }
+
         Ok(())
     }
 

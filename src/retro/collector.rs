@@ -77,7 +77,7 @@ mod tests {
     fn sample_dag_state() -> DagState {
         let dag = Dag {
             sprint: Sprint { id: "s1".into(), goal: "Test".into(), start: Utc::now(), max_duration_hours: 24 },
-            agents: vec![AgentNode { id: "a1".into(), role: "dev".into(), definition_path: "a.yaml".into() }],
+            agents: vec![AgentNode { id: "a1".into(), role: "dev".into(), definition_path: "a.yaml".into(), spec: None }],
             tasks: vec![Task {
                 id: "t1".into(), title: "Task 1".into(), assigned_to: "a1".into(),
                 issue_template: "t.md".into(), depends_on: vec![], reviewed_by: None,
