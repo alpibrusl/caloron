@@ -1,0 +1,137 @@
+{
+  "sprint": {
+    "id": "sprint-local-demo",
+    "goal": "Build a Python CLI calculator with tests and docs",
+    "start": "2026-04-09T09:00:00Z",
+    "max_duration_hours": 4
+  },
+  "agents": [
+    {
+      "id": "dev-core",
+      "role": "developer",
+      "definition_path": "",
+      "spec": {
+        "personality": "developer",
+        "capabilities": ["code-writing", "python", "testing"],
+        "model": "balanced",
+        "framework": "claude-code",
+        "extra_instructions": "You are building a Python CLI calculator. Use argparse for the CLI and keep it simple."
+      }
+    },
+    {
+      "id": "dev-extra",
+      "role": "developer",
+      "definition_path": "",
+      "spec": {
+        "personality": "developer",
+        "capabilities": ["code-writing", "python", "testing"],
+        "model": "balanced",
+        "framework": "claude-code",
+        "extra_instructions": "You are adding advanced math operations and history to an existing calculator."
+      }
+    },
+    {
+      "id": "qa",
+      "role": "qa-engineer",
+      "definition_path": "",
+      "spec": {
+        "personality": "qa",
+        "capabilities": ["code-writing", "python", "testing"],
+        "model": "balanced",
+        "framework": "claude-code",
+        "extra_instructions": "Write pytest tests. Cover edge cases: division by zero, invalid input, overflow."
+      }
+    },
+    {
+      "id": "docs",
+      "role": "developer",
+      "definition_path": "",
+      "spec": {
+        "personality": "developer",
+        "capabilities": ["code-writing", "python"],
+        "model": "fast",
+        "framework": "claude-code",
+        "extra_instructions": "Write a README.md with usage examples and a --help section."
+      }
+    },
+    {
+      "id": "reviewer",
+      "role": "reviewer",
+      "definition_path": "",
+      "spec": {
+        "personality": "reviewer",
+        "capabilities": ["code-writing", "python"],
+        "model": "strong",
+        "framework": "claude-code"
+      }
+    }
+  ],
+  "tasks": [
+    {
+      "id": "core-calc",
+      "title": "Implement basic calculator (add, subtract, multiply, divide)",
+      "assigned_to": "dev-core",
+      "issue_template": "task.md",
+      "depends_on": [],
+      "reviewed_by": "reviewer"
+    },
+    {
+      "id": "cli-interface",
+      "title": "Add argparse CLI interface with --operation and --numbers flags",
+      "assigned_to": "dev-core",
+      "issue_template": "task.md",
+      "depends_on": ["core-calc"],
+      "reviewed_by": "reviewer"
+    },
+    {
+      "id": "advanced-ops",
+      "title": "Add power, sqrt, modulo operations",
+      "assigned_to": "dev-extra",
+      "issue_template": "task.md",
+      "depends_on": ["core-calc"],
+      "reviewed_by": "reviewer"
+    },
+    {
+      "id": "history",
+      "title": "Add calculation history (stored in JSON file)",
+      "assigned_to": "dev-extra",
+      "issue_template": "task.md",
+      "depends_on": ["core-calc"],
+      "reviewed_by": "reviewer"
+    },
+    {
+      "id": "unit-tests",
+      "title": "Write unit tests for all operations (basic + advanced)",
+      "assigned_to": "qa",
+      "issue_template": "task.md",
+      "depends_on": ["core-calc", "advanced-ops"],
+      "reviewed_by": "reviewer"
+    },
+    {
+      "id": "integration-tests",
+      "title": "Write integration tests for CLI interface and history",
+      "assigned_to": "qa",
+      "issue_template": "task.md",
+      "depends_on": ["cli-interface", "history", "unit-tests"],
+      "reviewed_by": "reviewer"
+    },
+    {
+      "id": "readme",
+      "title": "Write README with usage examples and installation instructions",
+      "assigned_to": "docs",
+      "issue_template": "task.md",
+      "depends_on": ["cli-interface", "advanced-ops", "history"],
+      "reviewed_by": "reviewer"
+    }
+  ],
+  "review_policy": {
+    "required_approvals": 1,
+    "auto_merge": true,
+    "max_review_cycles": 3
+  },
+  "escalation": {
+    "stall_threshold_minutes": 15,
+    "supervisor_id": "supervisor",
+    "human_contact": "github_issue"
+  }
+}
