@@ -1,0 +1,66 @@
+{
+  "sprint": {
+    "id": "sprint-2026-04-w2",
+    "goal": "Implement user authentication and session management",
+    "start": "2026-04-08T09:00:00Z",
+    "max_duration_hours": 72
+  },
+  "agents": [
+    {
+      "id": "backend-1",
+      "role": "backend-developer",
+      "definition_path": "agents/backend-developer.yaml"
+    },
+    {
+      "id": "backend-2",
+      "role": "backend-developer",
+      "definition_path": "agents/backend-developer.yaml"
+    },
+    {
+      "id": "reviewer-1",
+      "role": "senior-reviewer",
+      "definition_path": "agents/senior-reviewer.yaml"
+    },
+    {
+      "id": "qa-1",
+      "role": "qa-engineer",
+      "definition_path": "agents/qa-engineer.yaml"
+    }
+  ],
+  "tasks": [
+    {
+      "id": "task-1",
+      "title": "Implement JWT token generation and validation",
+      "assigned_to": "backend-1",
+      "issue_template": "tasks/jwt-implementation.md",
+      "depends_on": [],
+      "reviewed_by": "reviewer-1"
+    },
+    {
+      "id": "task-2",
+      "title": "Implement session store with Redis",
+      "assigned_to": "backend-2",
+      "issue_template": "tasks/session-store.md",
+      "depends_on": [],
+      "reviewed_by": "reviewer-1"
+    },
+    {
+      "id": "task-3",
+      "title": "Integration tests for auth flow",
+      "assigned_to": "qa-1",
+      "issue_template": "tasks/auth-integration-tests.md",
+      "depends_on": ["task-1", "task-2"],
+      "reviewed_by": "reviewer-1"
+    }
+  ],
+  "review_policy": {
+    "required_approvals": 1,
+    "auto_merge": true,
+    "max_review_cycles": 3
+  },
+  "escalation": {
+    "stall_threshold_minutes": 20,
+    "supervisor_id": "supervisor",
+    "human_contact": "github_issue"
+  }
+}

@@ -1,0 +1,64 @@
+site_name: Caloron
+site_description: Multi-Agent Orchestration Platform
+repo_url: https://github.com/caloron/caloron
+
+theme:
+  name: material
+  palette:
+    - scheme: slate
+      primary: deep purple
+      accent: amber
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+    - scheme: default
+      primary: deep purple
+      accent: amber
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+  features:
+    - navigation.sections
+    - navigation.expand
+    - navigation.top
+    - content.code.copy
+    - content.tabs.link
+    - toc.follow
+
+markdown_extensions:
+  - admonition
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.details
+  - tables
+  - attr_list
+  - def_list
+  - toc:
+      permalink: true
+
+nav:
+  - Home: index.md
+  - Guide:
+    - Getting Started: guide/getting-started.md
+    - Core Concepts: guide/concepts.md
+    - Configuration: guide/configuration.md
+    - Agent Definitions: guide/agents.md
+    - Sprint Lifecycle: guide/sprint-lifecycle.md
+    - Nix Environments: guide/nix.md
+    - Noether Integration: guide/noether.md
+  - Reference:
+    - CLI Commands: reference/cli.md
+    - DAG Format: reference/dag-format.md
+    - Git Protocol: reference/git-protocol.md
+    - Feedback Format: reference/feedback.md
+    - Label Taxonomy: reference/labels.md
+  - Examples:
+    - End-to-End Sprint: examples/e2e-sprint.md
+  - Architecture: architecture.md

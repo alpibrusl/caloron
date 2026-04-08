@@ -1,0 +1,39 @@
+[project]
+name = "my-project"
+repo = "owner/repo"
+meta_repo = "owner/caloron-meta"
+
+[github]
+token_env = "GITHUB_TOKEN"
+polling_interval_seconds = 5
+# webhook_enabled = true
+# webhook_port = 9443
+# webhook_secret_env = "CALORON_WEBHOOK_SECRET"
+
+[noether]
+enabled = true
+endpoint = ""
+# Path to noether binary — defaults to "noether" from PATH
+# binary = "/home/alpibru/workspace/solv-noether/target/debug/noether"
+
+[supervisor]
+stall_default_threshold_minutes = 20
+max_review_cycles = 3
+escalation_method = "github_issue"
+
+[retro]
+enabled = true
+auto_run = true
+output_format = "markdown"
+
+[nix]
+enabled = true
+
+[llm]
+api_key_env = "ANTHROPIC_API_KEY"
+
+[llm.aliases]
+default = "claude-sonnet-4-6"
+fast = "claude-haiku-4-5"
+strong = "claude-opus-4-6"
+reviewer = "claude-opus-4-6"

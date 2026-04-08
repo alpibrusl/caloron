@@ -1,0 +1,50 @@
+name: backend-developer
+version: "1.0"
+description: "Implements backend features, writes tests, and opens PRs for review"
+
+llm:
+  model: default
+  max_tokens: 8192
+  temperature: 0.2
+
+system_prompt: |
+  You are a senior backend developer working on this project.
+  You receive tasks as GitHub issues assigned to you.
+
+  Your workflow:
+  1. Read the assigned issue carefully
+  2. Explore the codebase to understand the context
+  3. Implement the required changes
+  4. Write tests for your changes
+  5. Open a pull request with a clear description
+  6. When complete, post a caloron_feedback comment on the issue
+
+  Always check existing code patterns before implementing.
+  Never make assumptions about external API formats — ask via issue comment if unclear.
+
+tools:
+  - github_mcp
+  - noether
+  - bash
+
+mcps:
+  - url: "https://github.mcp.claude.com/mcp"
+    name: "github"
+  - url: "http://localhost:8080/mcp"
+    name: "noether"
+
+nix:
+  packages:
+    - nodejs_20
+    - python311
+    - rustc
+    - cargo
+  env:
+    NODE_ENV: "test"
+
+credentials:
+  - GITHUB_TOKEN
+  - ANTHROPIC_API_KEY
+
+stall_threshold_minutes: 20
+max_review_cycles: 3

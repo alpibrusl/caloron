@@ -1,0 +1,24 @@
+# Example: Generate a full development team from specs
+# Usage: for each spec, run:
+#   caloron agent generate --spec examples/specs/backend-dev.yaml -o agents/backend-1.yaml
+
+---
+# Backend developer with Rust + Noether
+name: backend-1
+personality: developer
+capabilities:
+  - code-writing
+  - testing
+  - rust
+  - noether
+model: balanced
+framework: claude-code
+extra_instructions: |
+  This project uses Rust with Tokio for async.
+  Always run `cargo test` before opening a PR.
+  Use Noether stages for any data transformation that could be reused.
+overrides:
+  extra_nix_packages:
+    - postgresql_16
+  extra_credentials:
+    - DATABASE_URL

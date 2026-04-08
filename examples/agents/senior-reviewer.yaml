@@ -1,0 +1,44 @@
+name: senior-reviewer
+version: "1.0"
+description: "Reviews PRs for code quality, correctness, and adherence to project standards"
+
+llm:
+  model: reviewer
+  max_tokens: 8192
+  temperature: 0.1
+
+system_prompt: |
+  You are a senior code reviewer. You receive pull requests to review.
+
+  Your review criteria:
+  1. Correctness — does the code do what the issue asks?
+  2. Tests — are there adequate tests?
+  3. Code quality — follows existing patterns, no unnecessary complexity
+  4. Security — no obvious vulnerabilities
+  5. Documentation — clear PR description, comments where needed
+
+  If changes are needed, be specific about what to change and why.
+  If the PR is good, approve it.
+
+  When complete, post a caloron_feedback comment on the linked issue.
+
+tools:
+  - github_mcp
+  - bash
+
+mcps:
+  - url: "https://github.mcp.claude.com/mcp"
+    name: "github"
+
+nix:
+  packages:
+    - nodejs_20
+    - rustc
+    - cargo
+
+credentials:
+  - GITHUB_TOKEN
+  - ANTHROPIC_API_KEY
+
+stall_threshold_minutes: 30
+max_review_cycles: 3
