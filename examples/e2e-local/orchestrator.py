@@ -26,6 +26,59 @@ AGENT_TIMEOUT_S = int(os.environ.get("AGENT_TIMEOUT", "180"))  # 3 minutes
 MAX_RETRIES = 2
 LEARNINGS_FILE = os.path.join(os.environ.get("WORK", "/tmp/caloron-full-loop"), "learnings.json")
 
+# API keys — set any of these to use API mode instead of Claude Pro
+ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
+GOOGLE_API_KEY = os.environ.get("GOOGLE_API_KEY", "")
+OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
+
+# ── Framework registry ──────────────────────────────────────────────────────
+
+FRAMEWORKS = {
+    "claude-code": {
+        "cmd": "claude",
+        "args": ["--dangerously-skip-permissions"],
+        "prompt_flag": "-p",
+        "api_key_env": "ANTHROPIC_API_KEY",
+        "api_key_flag": "--api-key",
+    },
+    "gemini-cli": {
+        "cmd": "gemini",
+        "args": [],
+        "prompt_flag": "-p",
+        "api_key_env": "GOOGLE_API_KEY",
+        "api_key_flag": None,  # gemini-cli uses env var
+    },
+    "aider": {
+        "cmd": "aider",
+        "args": ["--yes", "--no-auto-commits"],
+        "prompt_flag": "--message",
+        "api_key_env": "ANTHROPIC_API_KEY",
+        "api_key_flag": None,
+    },
+    "codex-cli": {
+        "cmd": "codex",
+        "args": ["--approval-mode", "full-auto"],
+        "prompt_flag": "-p",
+        "api_key_env": "OPENAI_API_KEY",
+        "api_key_flag": None,
+    },
+}
+
+
+def build_agent_command(framework: str, prompt: str) -> list[str]:
+    """Build the command list for a given framework and prompt."""
+    fw = FRAMEWORKS.get(framework, FRAMEWORKS["claude-code"])
+
+    cmd = [fw["cmd"]] + fw["args"]
+
+    # Add API key if available (overrides Pro subscription login)
+    api_key = os.environ.get(fw["api_key_env"], "")
+    if api_key and fw.get("api_key_flag"):
+        cmd.extend([fw["api_key_flag"], api_key])
+
+    cmd.extend([fw["prompt_flag"], prompt])
+    return cmd
+
 # ── Gitea API ───────────────────────────────────────────────────────────────
 
 def gitea(method: str, path: str, data: dict | None = None) -> dict:
@@ -107,13 +160,15 @@ def run_agent_with_supervision(
     task_id: str,
     issue_number: int,
     supervisor: SupervisorState,
+    framework: str = "claude-code",
 ) -> tuple[str, bool]:
     """Run an agent with timeout and retry. Returns (stdout, success)."""
 
     for attempt in range(1, MAX_RETRIES + 1):
         try:
+            agent_cmd = build_agent_command(framework, prompt)
             result = subprocess.run(
-                [sandbox, project, "claude", "-p", prompt, "--dangerously-skip-permissions"],
+                [sandbox, project] + agent_cmd,
                 capture_output=True, text=True,
                 timeout=AGENT_TIMEOUT_S,
             )
@@ -402,15 +457,25 @@ def main():
 
     # ── Step 1: PO Agent ────────────────────────────────────────────────
     print("--- Step 1: PO Agent ---")
+    available_frameworks = ", ".join(FRAMEWORKS.keys())
     po_prompt = f"""You are a Product Owner. Goal: {goal}
 {po_context}
-Output ONLY a JSON array:
-[{{"id":"...","title":"...","depends_on":[],"agent_prompt":"Create src/... with ..."}}]
-Keep to 2-3 tasks. Tests depend on implementation. Be specific about files and functions.
-Each agent_prompt MUST include exact file paths, function signatures, and expected behavior."""
+Output ONLY a JSON array. Each task has:
+- id: short identifier
+- title: one-line description
+- depends_on: list of task IDs ([] if none)
+- agent_prompt: specific instructions (exact file paths, function signatures, expected behavior)
+- framework: which tool to use (default: "claude-code"). Available: {available_frameworks}
 
+Example:
+[{{"id":"impl","title":"Implement module","depends_on":[],"agent_prompt":"Create src/mod.py with...","framework":"claude-code"}},
+ {{"id":"tests","title":"Write tests","depends_on":["impl"],"agent_prompt":"Create tests/test_mod.py...","framework":"claude-code"}}]
+
+Keep to 2-3 tasks. Tests depend on implementation."""
+
+    po_cmd = build_agent_command("claude-code", po_prompt)
     po_result = subprocess.run(
-        [SANDBOX, project, "claude", "-p", po_prompt, "--dangerously-skip-permissions"],
+        [SANDBOX, project] + po_cmd,
         capture_output=True, text=True, timeout=120)
     po_out = po_result.stdout or ""
 
@@ -457,13 +522,14 @@ Each agent_prompt MUST include exact file paths, function signatures, and expect
             tid = task["id"]
             title = task["title"]
             prompt = task.get("agent_prompt", title)
+            framework = task.get("framework", "claude-code")
             issue_num = issue_map.get(tid, 0)
             task_start = time.time()
             blockers = []
 
             print(f"{'=' * 50}")
             print(f"  Task: {tid} — {title}")
-            print(f"  Issue: #{issue_num}")
+            print(f"  Issue: #{issue_num} | Framework: {framework}")
             print(f"{'=' * 50}")
 
             # Agent writes code (with supervisor timeout)
@@ -471,9 +537,9 @@ Each agent_prompt MUST include exact file paths, function signatures, and expect
 
 Rules: Only create/modify files in src/ and tests/. Use type hints. When done, stop."""
 
-            print("  Agent running (sandboxed, supervised)...")
+            print(f"  Agent running ({framework}, sandboxed, supervised)...")
             agent_out, success = run_agent_with_supervision(
-                SANDBOX, project, full_prompt, tid, issue_num, supervisor)
+                SANDBOX, project, full_prompt, tid, issue_num, supervisor, framework)
 
             if not success:
                 blockers.append("Agent timed out and was escalated")
