@@ -26,6 +26,11 @@ AGENT_TIMEOUT_S = int(os.environ.get("AGENT_TIMEOUT", "180"))  # 3 minutes
 MAX_RETRIES = 2
 LEARNINGS_FILE = os.path.join(os.environ.get("WORK", "/tmp/caloron-full-loop"), "learnings.json")
 
+# Backend: "direct" (Claude CLI) or "noether" (via Noether stages)
+BACKEND = os.environ.get("CALORON_BACKEND", "direct")
+NOETHER_STAGES_DIR = os.environ.get("NOETHER_STAGES_DIR",
+    str(Path(__file__).parent.parent.parent.parent / "caloron-noether" / "stages"))
+
 # API keys — set any of these to use API mode instead of Claude Pro
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
 GOOGLE_API_KEY = os.environ.get("GOOGLE_API_KEY", "")
@@ -78,6 +83,82 @@ def build_agent_command(framework: str, prompt: str) -> list[str]:
 
     cmd.extend([fw["prompt_flag"], prompt])
     return cmd
+
+
+# ── Noether backend ────────────────────────────────────────────────────────
+
+def run_noether_stage(stage_file: str, input_data: dict) -> dict:
+    """Run a caloron-noether Python stage via stdin/stdout JSON."""
+    stage_path = os.path.join(NOETHER_STAGES_DIR, stage_file)
+    if not os.path.exists(stage_path):
+        print(f"  WARNING: stage not found: {stage_path}")
+        return {}
+    result = subprocess.run(
+        ["python3", stage_path],
+        input=json.dumps(input_data),
+        capture_output=True, text=True, timeout=30,
+    )
+    try:
+        return json.loads(result.stdout)
+    except Exception:
+        if result.stderr:
+            print(f"  Stage error: {result.stderr[:100]}")
+        return {}
+
+
+def noether_evaluate_dag(state: dict, events: list, stall_threshold_m: int = 20) -> dict:
+    """Run DAG evaluation through the Noether stage."""
+    return run_noether_stage("dag/evaluate.py", {
+        "state": state,
+        "events": events,
+        "stall_threshold_m": stall_threshold_m,
+    })
+
+
+def noether_check_health(agents: dict, stall_threshold_m: int = 20) -> dict:
+    """Run health check through the Noether stage."""
+    return run_noether_stage("supervisor/check_health.py", {
+        "agents": agents,
+        "stall_threshold_m": stall_threshold_m,
+    })
+
+
+def noether_decide_intervention(results: list, interventions: dict) -> dict:
+    """Run intervention decision through the Noether stage."""
+    return run_noether_stage("supervisor/decide_intervention.py", {
+        "results": results,
+        "interventions": interventions,
+    })
+
+
+def noether_compute_kpis(state: dict, started_at: str, ended_at: str) -> dict:
+    """Compute KPIs through the Noether stage."""
+    return run_noether_stage("retro/compute_kpis.py", {
+        "state": state,
+        "started_at": started_at,
+        "ended_at": ended_at,
+    })
+
+
+def noether_analyze_feedback(feedback_items: list, kpis: dict) -> dict:
+    """Analyze feedback through the Noether stage."""
+    return run_noether_stage("retro/analyze_feedback.py", {
+        "feedback_items": feedback_items,
+        "kpis": kpis,
+    })
+
+
+def noether_write_report(sprint_id: str, kpis: dict, feedback_items: list,
+                          started_at: str, ended_at: str) -> dict:
+    """Generate retro report through the Noether stage."""
+    return run_noether_stage("retro/write_report.py", {
+        "sprint_id": sprint_id,
+        "kpis": kpis,
+        "feedback_items": feedback_items,
+        "started_at": started_at,
+        "ended_at": ended_at,
+    })
+
 
 # ── Gitea API ───────────────────────────────────────────────────────────────
 
@@ -253,9 +334,10 @@ caloron_feedback:
 
 # ── Retro ───────────────────────────────────────────────────────────────────
 
-def run_retro(issue_numbers: list[int], supervisor: SupervisorState, sprint_time_s: int):
+def run_retro(issue_numbers: list[int], supervisor: SupervisorState, sprint_time_s: int,
+              sprint_start_iso: str = ""):
     """Collect feedback from Gitea issues and compute retro."""
-    print("=== RETRO ===")
+    print(f"=== RETRO ({BACKEND} backend) ===")
     print()
 
     # Collect feedback from issue comments
@@ -354,6 +436,37 @@ def run_retro(issue_numbers: list[int], supervisor: SupervisorState, sprint_time
     else:
         print(f"\n  No improvements needed — clean sprint!")
 
+    # Noether-enhanced analysis (when using noether backend)
+    if BACKEND == "noether" and feedbacks:
+        print(f"\n  Noether analysis:")
+        # Build feedback items for the stage
+        feedback_items = [{"is_parsed_yaml": True, "parsed": f} for f in feedbacks]
+        kpi_data = {
+            "completion_rate": completed / total if total else 0,
+            "avg_interventions": len(supervisor.events) / total if total else 0,
+        }
+        analysis = noether_analyze_feedback(feedback_items, kpi_data)
+        if analysis:
+            for theme in analysis.get("themes", []):
+                print(f"    Theme: {theme}")
+            for imp in analysis.get("improvements", []):
+                print(f"    Improvement: {imp}")
+            for learn in analysis.get("learnings", []):
+                print(f"    Learning: {learn}")
+            print(f"    Sentiment: {analysis.get('sentiment', '?')}")
+
+            # Add Noether improvements to the list
+            improvements.extend(analysis.get("improvements", []))
+
+        # Generate report via Noether stage
+        ended_at = datetime.now(timezone.utc).isoformat()
+        report = noether_write_report(
+            "sprint", kpi_data, feedback_items, sprint_start_iso or ended_at, ended_at)
+        if report and report.get("report_markdown"):
+            report_path = os.path.join(WORK, "retro_report.md")
+            Path(report_path).write_text(report["report_markdown"])
+            print(f"\n  Report written to: {report_path}")
+
     # Supervisor log
     if supervisor.events:
         print(f"\n  Supervisor log:")
@@ -449,7 +562,10 @@ def main():
 
     print("=" * 60)
     print(f"  FULL AUTONOMOUS SPRINT #{sprint_number}")
+    print(f"  Backend: {BACKEND}")
     print(f"  Goal: {goal}")
+    if BACKEND == "noether":
+        print(f"  Stages: {NOETHER_STAGES_DIR}")
     if po_context:
         print(f"  (with learnings from {len(learnings['sprints'])} previous sprint(s))")
     print("=" * 60)
@@ -690,7 +806,8 @@ Please fix the issues described above. Only modify files in src/ and tests/. Whe
 
     # ── Step 8: Retro ───────────────────────────────────────────────────
     print()
-    run_retro(list(issue_map.values()), supervisor, sprint_time)
+    sprint_start_iso = datetime.fromtimestamp(sprint_start, tz=timezone.utc).isoformat()
+    run_retro(list(issue_map.values()), supervisor, sprint_time, sprint_start_iso)
 
     # ── Gitea state ─────────────────────────────────────────────────────
     print("--- Gitea State ---")
