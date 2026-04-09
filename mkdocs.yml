@@ -53,6 +53,7 @@ nav:
     - Sprint Lifecycle: guide/sprint-lifecycle.md
     - Nix Environments: guide/nix.md
     - Noether Integration: guide/noether.md
+    - Scalability: guide/scalability.md
   - Reference:
     - CLI Commands: reference/cli.md
     - DAG Format: reference/dag-format.md
@@ -60,5 +61,6 @@ nav:
     - Feedback Format: reference/feedback.md
     - Label Taxonomy: reference/labels.md
   - Examples:
-    - End-to-End Sprint: examples/e2e-sprint.md
+    - Full Sprint (Proven): examples/full-sprint.md
+    - DAG Simulation: examples/e2e-sprint.md
   - Architecture: architecture.md
