@@ -24,6 +24,7 @@ SANDBOX = os.environ.get("SANDBOX", str(Path(__file__).parent.parent.parent / "s
 WORK = os.environ.get("WORK", "/tmp/caloron-full-loop")
 AGENT_TIMEOUT_S = int(os.environ.get("AGENT_TIMEOUT", "180"))  # 3 minutes
 MAX_RETRIES = 2
+LEARNINGS_FILE = os.path.join(os.environ.get("WORK", "/tmp/caloron-full-loop"), "learnings.json")
 
 # ── Gitea API ───────────────────────────────────────────────────────────────
 
@@ -304,7 +305,63 @@ def run_retro(issue_numbers: list[int], supervisor: SupervisorState, sprint_time
         for ev in supervisor.events:
             print(f"    [{ev['action']}] {ev['task_id']}: {ev['detail']}")
 
+    # Save learnings for next sprint
+    learnings = load_learnings()
+    learnings["sprints"].append({
+        "total": total,
+        "completed": completed,
+        "failed": failed,
+        "avg_clarity": round(avg_clarity, 1),
+        "supervisor_events": len(supervisor.events),
+        "sprint_time_s": sprint_time_s,
+        "blockers": all_blockers,
+    })
+    learnings["improvements"].extend(improvements)
+    save_learnings(learnings)
+    print(f"\n  Learnings saved ({len(learnings['sprints'])} sprints total)")
+
     print()
+
+
+# ── Learnings ───────────────────────────────────────────────────────────────
+
+def load_learnings() -> dict:
+    """Load learnings from previous sprints."""
+    if os.path.exists(LEARNINGS_FILE):
+        return json.loads(Path(LEARNINGS_FILE).read_text())
+    return {"sprints": [], "improvements": [], "po_context": ""}
+
+
+def save_learnings(learnings: dict):
+    """Save learnings for next sprint."""
+    Path(LEARNINGS_FILE).write_text(json.dumps(learnings, indent=2))
+
+
+def build_po_context(learnings: dict) -> str:
+    """Build context from previous sprints for the PO Agent."""
+    if not learnings["sprints"]:
+        return ""
+
+    ctx = "\n## Learnings from Previous Sprints\n\n"
+
+    last = learnings["sprints"][-1]
+    ctx += f"Last sprint: {last.get('completed', 0)}/{last.get('total', 0)} tasks completed, "
+    ctx += f"clarity {last.get('avg_clarity', '?')}/10, "
+    ctx += f"{last.get('supervisor_events', 0)} supervisor interventions.\n\n"
+
+    if learnings["improvements"]:
+        ctx += "Pending improvements:\n"
+        for imp in learnings["improvements"][-5:]:
+            ctx += f"- {imp}\n"
+        ctx += "\n"
+
+    if last.get("blockers"):
+        ctx += "Common blockers from last sprint:\n"
+        for b in last["blockers"][-3:]:
+            ctx += f"- {b}\n"
+        ctx += "\nAddress these in task specifications.\n"
+
+    return ctx
 
 
 # ── Main ────────────────────────────────────────────────────────────────────
@@ -330,19 +387,27 @@ def main():
     supervisor = SupervisorState()
     sprint_start = time.time()
 
+    # Load learnings from previous sprints
+    learnings = load_learnings()
+    sprint_number = len(learnings["sprints"]) + 1
+    po_context = build_po_context(learnings)
+
     print("=" * 60)
-    print(f"  FULL AUTONOMOUS SPRINT")
+    print(f"  FULL AUTONOMOUS SPRINT #{sprint_number}")
     print(f"  Goal: {goal}")
+    if po_context:
+        print(f"  (with learnings from {len(learnings['sprints'])} previous sprint(s))")
     print("=" * 60)
     print()
 
     # ── Step 1: PO Agent ────────────────────────────────────────────────
     print("--- Step 1: PO Agent ---")
     po_prompt = f"""You are a Product Owner. Goal: {goal}
-
+{po_context}
 Output ONLY a JSON array:
 [{{"id":"...","title":"...","depends_on":[],"agent_prompt":"Create src/... with ..."}}]
-Keep to 2-3 tasks. Tests depend on implementation. Be specific about files and functions."""
+Keep to 2-3 tasks. Tests depend on implementation. Be specific about files and functions.
+Each agent_prompt MUST include exact file paths, function signatures, and expected behavior."""
 
     po_result = subprocess.run(
         [SANDBOX, project, "claude", "-p", po_prompt, "--dangerously-skip-permissions"],
@@ -452,34 +517,81 @@ Rules: Only create/modify files in src/ and tests/. Use type hints. When done, s
                 pr_num = pr.get("number", "?")
                 print(f"  PR #{pr_num}")
 
-                # Reviewer agent (supervised)
-                print("  Reviewer...")
-                review_prompt = f"""Review code change for: {title}
+                # Review cycle — up to MAX_REVIEW_CYCLES attempts
+                MAX_REVIEW_CYCLES = 3
+                merged = False
+
+                for review_cycle in range(1, MAX_REVIEW_CYCLES + 1):
+                    # Reviewer agent (supervised)
+                    print(f"  Reviewer (cycle {review_cycle})...")
+                    review_prompt = f"""Review code change for: {title}
 Files changed: {', '.join(changed)}
 Check: correctness, tests, type hints.
 Respond ONLY: APPROVED or CHANGES_NEEDED: reason"""
 
-                review_out, review_ok = run_agent_with_supervision(
-                    SANDBOX, project, review_prompt, f"{tid}-review", issue_num, supervisor)
-                review = review_out.strip().split("\n")[-1] if review_out else "APPROVED"
-                print(f"  Review: {review[:60]}")
+                    review_out, review_ok = run_agent_with_supervision(
+                        SANDBOX, project, review_prompt, f"{tid}-review-{review_cycle}", issue_num, supervisor)
+                    review = review_out.strip().split("\n")[-1] if review_out else "APPROVED"
+                    print(f"  Review: {review[:80]}")
 
-                # Post review comment on PR
-                gitea("POST", f"/api/v1/repos/{REPO}/issues/{pr_num}/comments", {
-                    "body": f"**Code Review:** {review}"
-                })
+                    # Post review comment on PR
+                    gitea("POST", f"/api/v1/repos/{REPO}/issues/{pr_num}/comments", {
+                        "body": f"**Code Review (cycle {review_cycle}):** {review}"
+                    })
 
-                if "CHANGES_NEEDED" in review.upper():
-                    blockers.append(f"Reviewer: {review}")
+                    if "CHANGES_NEEDED" not in review.upper():
+                        # Approved — merge
+                        merge_ok = git_merge_branch(branch, f"Merge PR #{pr_num}: [{tid}] {title}")
+                        if merge_ok:
+                            gitea("POST", f"/api/v1/repos/{REPO}/pulls/{pr_num}/merge", {"Do": "merge"})
+                            print(f"  PR #{pr_num} MERGED ✓")
+                            merged = True
+                        else:
+                            print(f"  Merge FAILED — branch may have conflicts")
+                        break
 
-                # Merge via git (Gitea 1.22 merge API returns 405)
-                merge_ok = git_merge_branch(branch, f"Merge PR #{pr_num}: [{tid}] {title}")
-                if merge_ok:
-                    # Close the PR via API
-                    gitea("POST", f"/api/v1/repos/{REPO}/pulls/{pr_num}/merge", {"Do": "merge"})  # best effort
-                    print(f"  PR #{pr_num} MERGED ✓")
-                else:
-                    print(f"  Merge FAILED — branch may have conflicts")
+                    # Changes requested — agent fixes
+                    fix_reason = review.split("CHANGES_NEEDED:")[-1].strip() if ":" in review else review
+                    blockers.append(f"Review cycle {review_cycle}: {fix_reason}")
+                    print(f"  Agent fixing: {fix_reason[:60]}...")
+
+                    fix_prompt = f"""The reviewer requested changes on your code for: {title}
+
+Reviewer feedback: {fix_reason}
+
+Files to fix: {', '.join(changed)}
+
+Please fix the issues described above. Only modify files in src/ and tests/. When done, stop."""
+
+                    fix_out, fix_ok = run_agent_with_supervision(
+                        SANDBOX, project, fix_prompt, f"{tid}-fix-{review_cycle}", issue_num, supervisor)
+                    if fix_out:
+                        for line in fix_out.strip().split("\n")[-2:]:
+                            print(f"    {line}")
+
+                    # Upload fixed files to the same branch
+                    subprocess.run(["git", "add", "-A"], cwd=project, capture_output=True)
+                    fix_diff = subprocess.run(["git", "diff", "--cached", "--name-only"],
+                                              cwd=project, capture_output=True, text=True)
+                    fix_changed = [f for f in fix_diff.stdout.strip().split("\n")
+                                   if f and (f.startswith("src/") or f.startswith("tests/"))
+                                   and f not in ("src/__init__.py", "tests/__init__.py")]
+                    subprocess.run(["git", "checkout", "--", "."], cwd=project, capture_output=True)
+
+                    for filepath in fix_changed:
+                        full_path = os.path.join(project, filepath)
+                        if os.path.exists(full_path):
+                            content = open(full_path).read()
+                            upload_file(branch, filepath, content, f"[{tid}] fix: {filepath}")
+                    print(f"  Pushed fix ({len(fix_changed)} files)")
+
+                if not merged and review_cycle == MAX_REVIEW_CYCLES:
+                    # Force merge after max cycles
+                    print(f"  Max review cycles reached — force merging")
+                    merge_ok = git_merge_branch(branch, f"Merge PR #{pr_num}: [{tid}] {title} (force after {MAX_REVIEW_CYCLES} cycles)")
+                    if merge_ok:
+                        print(f"  PR #{pr_num} FORCE MERGED")
+                    blockers.append(f"Force merged after {MAX_REVIEW_CYCLES} review cycles")
 
             task_time = int(time.time() - task_start)
             task_time_min = max(1, task_time // 60)
