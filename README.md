@@ -57,4 +57,4 @@ Agents are defined by four composable axes:
 
 ## License
 
-MIT
+[EUPL-1.2](LICENSE) (European Union Public License)

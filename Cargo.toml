@@ -21,6 +21,7 @@ thiserror = "2"
 name = "caloron-daemon"
 version = "0.1.0"
 edition = "2024"
+license = "EUPL-1.2"
 
 [dependencies]
 caloron-types = { workspace = true }
