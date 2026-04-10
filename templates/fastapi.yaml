@@ -1,0 +1,108 @@
+name: FastAPI Application
+description: Lightweight FastAPI app with Pydantic, ruff, pytest
+
+match:
+  skills: [rest-api-development, python-development]
+  keywords: [fastapi, api, endpoint, rest, http]
+
+files:
+  pyproject.toml: |
+    [project]
+    name = "app"
+    version = "0.1.0"
+    requires-python = ">=3.11"
+    dependencies = [
+        "fastapi>=0.115",
+        "uvicorn[standard]>=0.30",
+        "pydantic>=2.0",
+        "pydantic-settings>=2.0",
+    ]
+
+    [project.optional-dependencies]
+    dev = ["pytest>=8.0", "httpx>=0.27", "ruff>=0.4"]
+
+    [tool.pytest.ini_options]
+    testpaths = ["tests"]
+    asyncio_mode = "auto"
+
+    [tool.ruff]
+    target-version = "py311"
+    line-length = 100
+
+  src/__init__.py: |
+    """Application package."""
+
+  src/main.py: |
+    """FastAPI application."""
+    from fastapi import FastAPI
+
+    app = FastAPI(title="App", version="0.1.0")
+
+    @app.get("/health")
+    async def health() -> dict:
+        return {"status": "ok"}
+
+  src/config.py: |
+    """Configuration from environment."""
+    from pydantic_settings import BaseSettings
+
+    class Settings(BaseSettings):
+        app_name: str = "app"
+        debug: bool = False
+        class Config:
+            env_file = ".env"
+
+    settings = Settings()
+
+  tests/__init__.py: ""
+
+  tests/conftest.py: |
+    import pytest
+    from fastapi.testclient import TestClient
+    from src.main import app
+
+    @pytest.fixture
+    def client():
+        return TestClient(app)
+
+  tests/test_health.py: |
+    def test_health(client):
+        r = client.get("/health")
+        assert r.status_code == 200
+        assert r.json()["status"] == "ok"
+
+ci:
+  github_actions: |
+    name: CI
+    on: [push, pull_request]
+    jobs:
+      test:
+        runs-on: ubuntu-latest
+        steps:
+          - uses: actions/checkout@v4
+          - uses: actions/setup-python@v5
+            with: { python-version: "3.11" }
+          - run: pip install -e ".[dev]"
+          - run: ruff check src/ tests/
+          - run: pytest -v
+
+  pre_commit: |
+    repos:
+      - repo: https://github.com/astral-sh/ruff-pre-commit
+        rev: v0.4.0
+        hooks:
+          - id: ruff
+            args: [--fix]
+          - id: ruff-format
+
+  dockerfile: |
+    FROM python:3.11-slim AS builder
+    WORKDIR /app
+    COPY pyproject.toml .
+    RUN pip install --no-cache-dir .
+    FROM python:3.11-slim
+    WORKDIR /app
+    COPY --from=builder /usr/local /usr/local
+    COPY src/ src/
+    EXPOSE 8000
+    CMD ["uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "8000"]

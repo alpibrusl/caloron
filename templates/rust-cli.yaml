@@ -1,0 +1,58 @@
+name: Rust CLI Application
+description: Rust CLI with clap, serde, anyhow, and clippy CI
+
+match:
+  skills: [rust-development]
+  keywords: [rust, cargo, cli, command-line]
+
+files:
+  Cargo.toml: |
+    [package]
+    name = "app"
+    version = "0.1.0"
+    edition = "2024"
+    license = "EUPL-1.2"
+
+    [dependencies]
+    clap = { version = "4", features = ["derive"] }
+    anyhow = "1"
+    serde = { version = "1", features = ["derive"] }
+    serde_json = "1"
+
+  src/main.rs: |
+    use clap::Parser;
+
+    #[derive(Parser)]
+    #[command(name = "app", about = "Application")]
+    struct Cli {
+        #[command(subcommand)]
+        command: Commands,
+    }
+
+    #[derive(clap::Subcommand)]
+    enum Commands {
+        Run,
+    }
+
+    fn main() -> anyhow::Result<()> {
+        let cli = Cli::parse();
+        match cli.command {
+            Commands::Run => println!("Running"),
+        }
+        Ok(())
+    }
+
+ci:
+  github_actions: |
+    name: CI
+    on: [push, pull_request]
+    jobs:
+      test:
+        runs-on: ubuntu-latest
+        steps:
+          - uses: actions/checkout@v4
+          - uses: dtolnay/rust-toolchain@stable
+          - uses: Swatinem/rust-cache@v2
+          - run: cargo test
+          - run: cargo clippy -- -D warnings
+          - run: cargo fmt -- --check

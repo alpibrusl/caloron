@@ -1,0 +1,64 @@
+name: Python Data Science
+description: Data analysis project with pandas, numpy, pytest
+
+match:
+  skills: [data-analysis-pandas, python-development]
+  keywords: [pandas, data, analysis, csv, anomaly, ml, statistics]
+
+files:
+  pyproject.toml: |
+    [project]
+    name = "analysis"
+    version = "0.1.0"
+    requires-python = ">=3.11"
+    dependencies = ["pandas>=2.0", "numpy>=1.26"]
+
+    [project.optional-dependencies]
+    dev = ["pytest>=8.0", "ruff>=0.4"]
+
+    [tool.pytest.ini_options]
+    testpaths = ["tests"]
+
+    [tool.ruff]
+    target-version = "py311"
+
+  src/__init__.py: |
+    """Data analysis package."""
+
+  tests/__init__.py: ""
+
+  tests/conftest.py: |
+    import pytest
+    import pandas as pd
+
+    @pytest.fixture
+    def sample_df():
+        return pd.DataFrame({
+            "id": [1, 2, 3],
+            "value": [10.0, 20.0, 30.0],
+        })
+
+  data/.gitkeep: ""
+
+ci:
+  github_actions: |
+    name: CI
+    on: [push, pull_request]
+    jobs:
+      test:
+        runs-on: ubuntu-latest
+        steps:
+          - uses: actions/checkout@v4
+          - uses: actions/setup-python@v5
+            with: { python-version: "3.11" }
+          - run: pip install -e ".[dev]"
+          - run: ruff check src/ tests/
+          - run: pytest -v
+
+  pre_commit: |
+    repos:
+      - repo: https://github.com/astral-sh/ruff-pre-commit
+        rev: v0.4.0
+        hooks:
+          - id: ruff
+            args: [--fix]

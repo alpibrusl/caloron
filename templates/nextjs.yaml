@@ -1,0 +1,77 @@
+name: Next.js Application
+description: Next.js 14 with TypeScript, Tailwind, ESLint, and Jest
+
+match:
+  skills: [typescript-development]
+  keywords: [nextjs, next.js, react, frontend, web app]
+
+files:
+  package.json: |
+    {
+      "name": "app",
+      "version": "0.1.0",
+      "private": true,
+      "scripts": {
+        "dev": "next dev",
+        "build": "next build",
+        "start": "next start",
+        "lint": "next lint",
+        "test": "jest"
+      },
+      "dependencies": {
+        "next": "^14",
+        "react": "^18",
+        "react-dom": "^18"
+      },
+      "devDependencies": {
+        "@types/node": "^20",
+        "@types/react": "^18",
+        "typescript": "^5",
+        "jest": "^29",
+        "@testing-library/react": "^15",
+        "eslint": "^8",
+        "eslint-config-next": "^14",
+        "tailwindcss": "^3"
+      }
+    }
+
+  tsconfig.json: |
+    {
+      "compilerOptions": {
+        "target": "es5",
+        "lib": ["dom", "dom.iterable", "esnext"],
+        "strict": true,
+        "jsx": "preserve",
+        "module": "esnext",
+        "moduleResolution": "bundler",
+        "paths": { "@/*": ["./src/*"] }
+      },
+      "include": ["next-env.d.ts", "**/*.ts", "**/*.tsx"],
+      "exclude": ["node_modules"]
+    }
+
+  src/app/layout.tsx: |
+    export const metadata = { title: 'App', description: 'Application' };
+    export default function RootLayout({ children }: { children: React.ReactNode }) {
+      return <html lang="en"><body>{children}</body></html>;
+    }
+
+  src/app/page.tsx: |
+    export default function Home() {
+      return <main><h1>App</h1></main>;
+    }
+
+ci:
+  github_actions: |
+    name: CI
+    on: [push, pull_request]
+    jobs:
+      test:
+        runs-on: ubuntu-latest
+        steps:
+          - uses: actions/checkout@v4
+          - uses: actions/setup-node@v4
+            with: { node-version: "20" }
+          - run: npm ci
+          - run: npm run lint
+          - run: npm run build

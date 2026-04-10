@@ -548,19 +548,207 @@ def apply_template(worktree: str, template_id: str) -> list[str]:
     return created
 
 
-def scaffold_project(worktree: str, skills: list[str], task_text: str) -> dict:
-    """Match and apply the best template. Returns template info and files created."""
-    template_id = match_template(skills, task_text)
-    if not template_id:
+# ── YAML Template Loading ──────────────────────────────────────────────────
+
+TEMPLATES_DIR = os.environ.get("CALORON_TEMPLATES_DIR",
+    str(Path(__file__).parent.parent.parent / "templates"))
+
+
+def load_yaml_templates(templates_dir: str = TEMPLATES_DIR) -> dict:
+    """Load user-defined templates from YAML files in the templates directory."""
+    loaded = {}
+    if not os.path.isdir(templates_dir):
+        return loaded
+
+    try:
+        import yaml
+    except ImportError:
+        return loaded
+
+    for f in sorted(Path(templates_dir).glob("*.yaml")):
+        try:
+            data = yaml.safe_load(f.read_text())
+            template_id = f.stem
+
+            # Convert YAML format to internal format
+            files = {}
+
+            # Main source files
+            for filepath, content in data.get("files", {}).items():
+                if isinstance(content, str):
+                    # Simple template variable substitution
+                    content = content.replace("{{ project_name }}", data.get("name", "app").lower().replace(" ", "-"))
+                files[filepath] = content
+
+            # CI files
+            ci = data.get("ci", {})
+            if ci.get("github_actions"):
+                files[".github/workflows/ci.yml"] = ci["github_actions"]
+            if ci.get("pre_commit"):
+                files[".pre-commit-config.yaml"] = ci["pre_commit"]
+            if ci.get("dockerfile"):
+                files["Dockerfile"] = ci["dockerfile"]
+            if ci.get("docker_compose"):
+                files["docker-compose.yml"] = ci["docker_compose"]
+
+            match = data.get("match", {})
+            loaded[template_id] = {
+                "name": data.get("name", template_id),
+                "match_skills": match.get("skills", []),
+                "match_keywords": match.get("keywords", []),
+                "files": files,
+            }
+        except Exception as e:
+            print(f"  Warning: failed to load template {f.name}: {e}")
+
+    return loaded
+
+
+def load_all_templates() -> dict:
+    """Load built-in templates + user YAML templates. YAML overrides built-in."""
+    all_templates = dict(TEMPLATES)
+    yaml_templates = load_yaml_templates()
+    all_templates.update(yaml_templates)  # YAML takes priority
+    return all_templates
+
+
+# ── LLM Template Generation ───────────────────────────────────────────────
+
+def generate_template_with_llm(
+    stack_description: str,
+    sandbox: str = "",
+    project_dir: str = "/tmp",
+) -> dict | None:
+    """Ask Claude to generate a template YAML for a stack we don't have.
+
+    Returns parsed template dict, or None if generation fails.
+    """
+    import subprocess, re
+
+    prompt = f"""Generate a project template YAML for: {stack_description}
+
+Output a YAML file following this exact format:
+
+name: <Template Name>
+description: <One line>
+match:
+  skills: [<skill1>, <skill2>]
+  keywords: [<keyword1>, <keyword2>]
+files:
+  <path/to/file>: |
+    <file content>
+ci:
+  github_actions: |
+    <GitHub Actions YAML>
+  pre_commit: |
+    <pre-commit config>
+
+Include: project config, source skeleton with one working endpoint or function,
+test skeleton with one smoke test, CI pipeline, and pre-commit hooks.
+
+Output ONLY the YAML, nothing else."""
+
+    try:
+        if sandbox:
+            result = subprocess.run(
+                [sandbox, project_dir, "claude", "-p", prompt, "--dangerously-skip-permissions"],
+                capture_output=True, text=True, timeout=120)
+        else:
+            result = subprocess.run(
+                ["claude", "-p", prompt, "--dangerously-skip-permissions"],
+                capture_output=True, text=True, timeout=120)
+
+        output = result.stdout or ""
+
+        # Extract YAML from output (may be in a code block)
+        yaml_match = re.search(r"```ya?ml\s*\n(.*?)\n```", output, re.DOTALL)
+        yaml_text = yaml_match.group(1) if yaml_match else output
+
+        import yaml
+        data = yaml.safe_load(yaml_text)
+        if not isinstance(data, dict) or "name" not in data:
+            return None
+
+        return data
+
+    except Exception:
+        return None
+
+
+def save_generated_template(data: dict, templates_dir: str = TEMPLATES_DIR):
+    """Save an LLM-generated template to the templates directory."""
+    import yaml
+
+    name = data.get("name", "custom").lower().replace(" ", "-")
+    path = Path(templates_dir) / f"{name}.yaml"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(yaml.dump(data, default_flow_style=False, sort_keys=False))
+    return str(path)
+
+
+# ── Updated scaffold function ─────────────────────────────────────────────
+
+def scaffold_project(worktree: str, skills: list[str], task_text: str,
+                     allow_llm_generation: bool = False,
+                     sandbox: str = "") -> dict:
+    """Match and apply the best template.
+
+    1. Check built-in + user YAML templates
+    2. If no match and allow_llm_generation, ask Claude to create one
+    3. Apply the template to the worktree
+    """
+    # Load all templates (built-in + YAML)
+    all_templates = load_all_templates()
+
+    # Try matching
+    best_match = None
+    best_score = 0
+    text = task_text.lower()
+
+    for template_id, template in all_templates.items():
+        score = 0
+        for skill in template.get("match_skills", []):
+            if skill in skills:
+                score += 2
+        for keyword in template.get("match_keywords", []):
+            if keyword in text:
+                score += 1
+        if score > best_score:
+            best_score = score
+            best_match = template_id
+
+    if best_score < 2 and allow_llm_generation:
+        # No good match — generate a template
+        print(f"  No template match — generating with LLM...")
+        generated = generate_template_with_llm(task_text, sandbox, worktree)
+        if generated:
+            saved_path = save_generated_template(generated)
+            print(f"  Template generated and saved to: {saved_path}")
+            # Reload and try again
+            all_templates = load_all_templates()
+            # Use the freshly generated one
+            name = generated.get("name", "custom").lower().replace(" ", "-")
+            if name in all_templates:
+                best_match = name
+                best_score = 10  # Force use
+
+    if best_score < 2:
         return {"template": None, "files": []}
 
-    files = apply_template(worktree, template_id)
-    template = TEMPLATES[template_id]
+    # Apply template
+    template = all_templates[best_match]
+    created = []
+    for filepath, content in template.get("files", {}).items():
+        full_path = os.path.join(worktree, filepath)
+        os.makedirs(os.path.dirname(full_path), exist_ok=True)
+        if not os.path.exists(full_path):
+            Path(full_path).write_text(content if isinstance(content, str) else "")
+            created.append(filepath)
 
     return {
-        "template": template_id,
-        "template_name": template["name"],
-        "files": files,
+        "template": best_match,
+        "template_name": template.get("name", best_match),
+        "files": created,
     }
 
 
