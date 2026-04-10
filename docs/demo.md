@@ -6,7 +6,7 @@ Real recording of a Caloron sprint — not a simulation.
 
 PO Agent generates a DAG, agents build a charging window optimizer for electric trucks, reviewer catches a bug, code gets merged on Gitea.
 
-[![asciicast](https://asciinema.org/a/z1fUmMIcy4zODbVk.svg)](https://asciinema.org/a/z1fUmMIcy4zODbVk)
+[![asciicast](https://asciinema.org/a/VtPLoUxYinUTiJjf.svg)](https://asciinema.org/a/VtPLoUxYinUTiJjf)
 
 **What happens (3.5 minutes):**
 
