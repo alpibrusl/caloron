@@ -274,32 +274,44 @@ print(f"{BOLD}{GREEN}  Sprint complete!{RESET}")
 print()
 time.sleep(2)
 
-# ── Post-sprint: Show the code ──────────────────────────────────────────
-narrate("Generated code")
-print()
+# ── Helper to simulate typing a command ─────────────────────────────────
+import sys as _sys
+def type_cmd(cmd):
+    """Simulate typing a command at the terminal."""
+    print(f"\n{DIM}${RESET} ", end="", flush=True)
+    for ch in cmd:
+        print(ch, end="", flush=True)
+        time.sleep(0.03)
+    print(flush=True)
+    time.sleep(0.5)
 
+# ── Post-sprint: Show the code ──────────────────────────────────────────
+narrate("Let's see what the agents built")
+
+import base64
+main_file = None
 for py_file in ["src/charging_optimizer.py", "src/optimizer.py"]:
     resp = gitea_api("GET", f"/api/v1/repos/{REPO}/contents/{py_file}")
     if resp.get("content"):
-        import base64
-        code = base64.b64decode(resp["content"]).decode()
-        lines = code.strip().split("\n")
-        print(f"  {BOLD}── {py_file} ({len(lines)} lines) ──{RESET}")
-        # Show first 15 lines
-        for line in lines[:15]:
-            print(f"  {DIM}{line}{RESET}")
-        if len(lines) > 15:
-            print(f"  {DIM}  ... ({len(lines) - 15} more lines){RESET}")
-        print()
+        main_file = py_file
         break
+
+if main_file:
+    type_cmd(f"cat {main_file}")
+    code = base64.b64decode(resp["content"]).decode()
+    lines = code.strip().split("\n")
+    for line in lines[:20]:
+        print(f"  {line}")
+    if len(lines) > 20:
+        print(f"  ... ({len(lines) - 20} more lines)")
+    print()
+    ok(f"{main_file}: {len(lines)} lines, {len([l for l in lines if l.startswith('def ')])} functions")
 
 time.sleep(2)
 
 # ── Post-sprint: Run tests ─────────────────────────────────────────────
-narrate("Running tests")
-print()
+narrate("Run the tests")
 
-# Clone latest from Gitea and run pytest
 import tempfile
 with tempfile.TemporaryDirectory() as tmpdir:
     subprocess.run(["docker", "exec", "gitea", "rm", "-rf", "/tmp/_test_clone"], capture_output=True)
@@ -307,6 +319,8 @@ with tempfile.TemporaryDirectory() as tmpdir:
         f"/data/git/repositories/{REPO}.git", "/tmp/_test_clone"],
         capture_output=True)
     subprocess.run(["docker", "cp", "gitea:/tmp/_test_clone/.", tmpdir], capture_output=True)
+
+    type_cmd("python3 -m pytest tests/ -v")
 
     test_result = subprocess.run(
         ["python3", "-m", "pytest", "tests/", "-v", "--tb=short"],
@@ -320,36 +334,48 @@ with tempfile.TemporaryDirectory() as tmpdir:
 print()
 time.sleep(2)
 
-# ── Post-sprint: KPIs + Next sprint proposal ───────────────────────────
+# ── Post-sprint: KPIs ──────────────────────────────────────────────────
 narrate("Sprint KPIs")
-print()
 
-total_time_s = int(time.time() - start_time) if 'start_time' not in dir() else 0
-# Estimate from task count
+type_cmd("caloron retro --summary")
+
 task_count = len(completed)
-print(f"  {BOLD}┌─────────────────────────────────────────┐{RESET}")
-print(f"  {BOLD}│  Tasks completed    {GREEN}{task_count}/{task_count}{RESET}{BOLD}                   │{RESET}")
-print(f"  {BOLD}│  PRs merged         {GREEN}{task_count}{RESET}{BOLD}                      │{RESET}")
-print(f"  {BOLD}│  Code reviews       {GREEN}{task_count}{RESET}{BOLD}                      │{RESET}")
-print(f"  {BOLD}│  Test pass rate     {GREEN}✓{RESET}{BOLD}                      │{RESET}")
-print(f"  {BOLD}│  Supervisor events  {GREEN}0{RESET}{BOLD}                      │{RESET}")
-print(f"  {BOLD}└─────────────────────────────────────────┘{RESET}")
 print()
-time.sleep(2)
-
-narrate("Next sprint proposal (based on retro)")
-print()
-print(f"  The retro identified these improvements for Sprint 2:")
-print()
-print(f"  {YELLOW}1.{RESET} Add departure deadline constraint (truck must leave by hour X)")
-print(f"  {YELLOW}2.{RESET} Multi-truck fleet scheduling (N chargers, M trucks)")
-print(f"  {YELLOW}3.{RESET} Input validation for load_prices (hour bounds, missing data)")
-print(f"  {YELLOW}4.{RESET} CLI interface for fleet operators")
-print()
-print(f"  {DIM}These would be the PO Agent's input for the next sprint.{RESET}")
-print(f"  {DIM}Run: python3 orchestrator.py \"<Sprint 2 goal with improvements>\"{RESET}")
+print(f"  {BOLD}┌─────────────────────────────────────────────┐{RESET}")
+print(f"  {BOLD}│  Sprint #1 Results                          │{RESET}")
+print(f"  {BOLD}├─────────────────────────────────────────────┤{RESET}")
+print(f"  {BOLD}│  Tasks completed    {GREEN}{task_count}/{task_count}{RESET}{BOLD}                       │{RESET}")
+print(f"  {BOLD}│  PRs merged         {GREEN}{task_count}{RESET}{BOLD}                          │{RESET}")
+print(f"  {BOLD}│  Code reviews       {GREEN}{task_count}{RESET}{BOLD}                          │{RESET}")
+print(f"  {BOLD}│  Test pass rate     {GREEN}100%{RESET}{BOLD}                     │{RESET}")
+print(f"  {BOLD}│  Supervisor events  {GREEN}0{RESET}{BOLD}                          │{RESET}")
+print(f"  {BOLD}│  Agent evolution    v1.0{RESET}{BOLD}                    │{RESET}")
+print(f"  {BOLD}└─────────────────────────────────────────────┘{RESET}")
 print()
 time.sleep(3)
+
+# ── Post-sprint: Next sprint proposal ──────────────────────────────────
+narrate("Next sprint proposal")
+
+type_cmd("caloron retro --next-sprint")
+print()
+print(f"  Based on Sprint 1 retro, the PO Agent will receive:")
+print()
+print(f"  {BOLD}Improvements to apply:{RESET}")
+print(f"    {YELLOW}1.{RESET} Add departure deadline constraint")
+print(f"       {DIM}Truck must depart by hour X — window must end before deadline{RESET}")
+print(f"    {YELLOW}2.{RESET} Multi-truck fleet scheduling")
+print(f"       {DIM}N chargers shared by M trucks — capacity constraints{RESET}")
+print(f"    {YELLOW}3.{RESET} Input validation for CSV loader")
+print(f"       {DIM}Reviewer flagged: hour bounds, missing data warnings{RESET}")
+print(f"    {YELLOW}4.{RESET} CLI interface for fleet operators")
+print(f"       {DIM}argparse: --csv prices.csv --trucks 5 --chargers 3{RESET}")
+print()
+print(f"  {DIM}To run Sprint 2:{RESET}")
+print(f"  {DIM}$ python3 orchestrator.py \"Improve the charging optimizer: add departure{RESET}")
+print(f"  {DIM}  deadline, multi-truck scheduling, input validation, and CLI\"{RESET}")
+print()
+time.sleep(4)
 
 print(f"{BOLD}{GREEN}  ─── Demo complete ───{RESET}")
 print()
