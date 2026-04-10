@@ -95,14 +95,16 @@ echo -e "${BOLD}  ╚═══════════════════�
 echo ""
 sleep 2
 
-narrate "Goal: Build a Python charging optimizer for electric trucks"
+DEMO_GOAL="${DEMO_GOAL:-Build a Python hotel rate anomaly detector for an OTA revenue management team. Given a CSV of daily hotel rates (hotel_id, date, rate, occupancy_pct), detect pricing anomalies using z-score with seasonal adjustment. Flag rates deviating more than 2 std from rolling mean. Return summaries with hotel_id, date, rate, expected_rate, z_score, is_anomaly. Include pytest tests.}"
+
+narrate "Goal: $DEMO_GOAL"
 sleep 1
 
 # ── Step 1: PO Agent ────────────────────────────────────────────────────────
 
 narrate "Step 1: PO Agent plans the sprint"
 
-PO_PROMPT="You are a Product Owner. Goal: Build a Python module that finds the cheapest 4-hour charging window for a truck given 24 hourly electricity prices. Include SoC validation and pytest tests.
+PO_PROMPT="You are a Product Owner. Goal: $DEMO_GOAL
 
 Output ONLY a JSON array:
 [{\"id\":\"...\",\"title\":\"...\",\"depends_on\":[],\"agent_prompt\":\"...\"}]
@@ -362,14 +364,14 @@ print()
 print(f"  Based on Sprint 1 retro, the PO Agent will receive:")
 print()
 print(f"  {BOLD}Improvements to apply:{RESET}")
-print(f"    {YELLOW}1.{RESET} Add departure deadline constraint")
-print(f"       {DIM}Truck must depart by hour X — window must end before deadline{RESET}")
-print(f"    {YELLOW}2.{RESET} Multi-truck fleet scheduling")
-print(f"       {DIM}N chargers shared by M trucks — capacity constraints{RESET}")
-print(f"    {YELLOW}3.{RESET} Input validation for CSV loader")
-print(f"       {DIM}Reviewer flagged: hour bounds, missing data warnings{RESET}")
-print(f"    {YELLOW}4.{RESET} CLI interface for fleet operators")
-print(f"       {DIM}argparse: --csv prices.csv --trucks 5 --chargers 3{RESET}")
+print(f"    {YELLOW}1.{RESET} Add competitor rate comparison")
+print(f"       {DIM}Flag anomalies vs market average, not just hotel history{RESET}")
+print(f"    {YELLOW}2.{RESET} Seasonal decomposition")
+print(f"       {DIM}Separate trend + seasonality before z-score (avoid false positives){RESET}")
+print(f"    {YELLOW}3.{RESET} REST API endpoint")
+print(f"       {DIM}POST /anomalies with date range filter, FastAPI{RESET}")
+print(f"    {YELLOW}4.{RESET} Dashboard data export")
+print(f"       {DIM}JSON output for revenue management team dashboard{RESET}")
 print()
 print(f"  {DIM}To run Sprint 2:{RESET}")
 print(f"  {DIM}$ python3 orchestrator.py \"Improve the charging optimizer: add departure{RESET}")

@@ -42,3 +42,39 @@ asciinema upload my-demo.cast
 
 - [caloron-noether demo](https://asciinema.org/a/GOMIILJSz8ZpeF0R) — same sprint via Noether stages
 - [Full Sprint Walkthrough](examples/full-sprint.md) — detailed text explanation
+
+---
+
+## OTA Demo: Hotel Rate Anomaly Detector
+
+PO Agent generates 3 tasks for a revenue management tool: anomaly detector, sample data, and tests.
+
+[![asciicast](https://asciinema.org/a/AsOjukdSB9l968o5.svg)](https://asciinema.org/a/AsOjukdSB9l968o5)
+
+**What the PO decided:**
+
+1. **Implement anomaly detector** — z-score with rolling window, per-hotel grouping
+2. **Generate sample CSV** — test data with known anomalies
+3. **Write pytest tests** — covering all functions and edge cases
+
+**Code produced (task 1, before rate limit):**
+
+```python
+def detect_anomalies(df, window=30, z_threshold=2.0):
+    for _, group in df.groupby("hotel_id"):
+        group["expected_rate"] = group["rate"].rolling(window, min_periods=7).mean()
+        rolling_std = group["rate"].rolling(window, min_periods=7).std()
+        group["z_score"] = (group["rate"] - group["expected_rate"]) / rolling_std
+        group["is_anomaly"] = group["z_score"].abs() > z_threshold
+```
+
+**Next sprint proposal:**
+
+1. Add competitor rate comparison
+2. Seasonal decomposition (separate trend before z-score)
+3. REST API endpoint (FastAPI)
+4. Dashboard data export (JSON for revenue team)
+
+!!! note
+    Tasks 2-3 hit Claude Pro rate limit during recording.
+    Re-record after limit resets for complete demo.
