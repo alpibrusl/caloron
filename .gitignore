@@ -3,3 +3,5 @@
 .caloron/worktrees/
 .caloron/nix/
 resume
+__pycache__/
+*.pyc
