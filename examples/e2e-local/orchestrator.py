@@ -19,6 +19,7 @@ from pathlib import Path
 from agent_versioning import AgentVersionStore, auto_evolve_agents, print_agent_history
 from skill_store import SkillStore
 from hr_agent import run_hr_agent, print_assignments
+from agent_configurator import configure_agent, print_config_summary
 
 # ── Config ──────────────────────────────────────────────────────────────────
 
@@ -736,12 +737,18 @@ Keep to 2-3 tasks. Tests depend on implementation."""
             print(f"  Issue: #{issue_num} | Framework: {framework}")
             print(f"{'=' * 50}")
 
+            # Configure the agent's worktree with skill-specific files
+            config_result = configure_agent(project, task, framework)
+            extra_cli_flags = config_result.get("extra_flags", [])
+            print_config_summary(project, framework)
+
             # Agent writes code (with supervisor timeout)
             full_prompt = f"""{prompt}
 
 Rules:
 - Only create/modify files in src/ and tests/
 - Use type hints
+- Read CLAUDE.md for skill-specific instructions
 - When COMPLETELY done, output a feedback block as the LAST thing you print, in this exact format:
 
 CALORON_FEEDBACK_START
