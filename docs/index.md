@@ -1,62 +1,79 @@
 # Caloron
 
-**Multi-Agent Orchestration Platform**
+**Multi-Agent Orchestration Platform — agents collaborate through Git to build software.**
 
-Caloron orchestrates AI agents that collaborate through Git to build software. Agents communicate via issues, pull requests, and code reviews. The orchestrator manages their lifecycle, detects failures, and learns between sprints.
+## What It Does
 
-## What Caloron Does
+You give Caloron a goal. It builds the software:
 
-You give Caloron a goal. It:
+```
+$ python3 orchestrator.py "Build a charging optimizer for electric trucks"
 
-1. **Plans** — The PO Agent breaks the goal into tasks with dependencies
-2. **Executes** — Agents are spawned in isolated Nix environments with dedicated git worktrees
-3. **Reviews** — Reviewer agents review PRs, request changes, approve and merge
-4. **Monitors** — The Supervisor detects stalled agents, restarts them, escalates to humans
-5. **Learns** — The Retro Engine analyzes what went well and what didn't, improving the next sprint
-
-```mermaid
-graph LR
-    H[Human] -->|"caloron kickoff"| PO[PO Agent]
-    PO -->|DAG| D[Daemon]
-    D -->|spawn| A1[Agent 1]
-    D -->|spawn| A2[Agent 2]
-    D -->|spawn| R[Reviewer]
-    A1 -->|PR| R
-    A2 -->|PR| R
-    R -->|approve| D
-    D -->|merge| G[Git]
-    D -->|retro| RE[Retro Engine]
+  PO Agent → 2 tasks with dependencies
+  Agent 1 → src/optimizer.py (sliding window + SoC validation)
+  Agent 2 → tests/test_optimizer.py (29 tests)
+  Reviewer → "CHANGES_NEEDED: no input validation"
+  Agent 1 → fixes code, adds validation
+  Reviewer → "APPROVED"
+  PR merged
+  Retro → clarity 7/10, 0 blockers, agents evolved v1.0 → v1.1
 ```
 
-## Key Design Decisions
+All real: Claude writes code, Gitea has the PRs, the reviewer catches real bugs, agents learn from feedback.
 
-- **Git is the communication bus** — All agent communication happens through issues, PRs, and comments. No custom protocols.
-- **Agents don't know they're agents** — They receive tasks as GitHub issues and deliver results as PRs. The orchestration is invisible.
-- **Nix for isolation** — Each agent runs in a reproducible Nix environment. No Docker overhead.
-- **Fixed DAG per sprint** — The task graph doesn't change during execution. If restructuring is needed, cancel and restart.
-- **Supervisor with playbook** — Stall detection follows a structured ladder: probe, restart, reassign, escalate.
+## Proven Capabilities
+
+| Feature | Evidence |
+|---------|----------|
+| PO generates DAG dynamically | Claude decides tasks + dependencies from goal |
+| Non-linear DAGs | Fan-out, diamond joins, complex dependency graphs |
+| Agents write real code | 29 passing tests on a charging optimizer |
+| PR review cycle | Reviewer rejected → agent fixed → approved |
+| Supervisor | Probe → restart → escalate (proven with forced timeout) |
+| Agent feedback | Agents report clarity, blockers, tools used |
+| Retro with real KPIs | Completion rate, clarity, review cycles |
+| Sprint-over-sprint learning | Sprint 2 PO received Sprint 1 learnings |
+| Agent versioning | Auto-evolve: low clarity → add instructions, high failure → stronger model |
+| Filesystem sandbox | bubblewrap: host filesystem hidden from agents |
+| Multi-framework | claude-code, gemini-cli, aider, codex-cli per task |
 
 ## Quick Start
 
 ```bash
-# Build
-cargo build --workspace
+git clone https://github.com/alpibrusl/caloron
+cd caloron
 
-# Validate an agent definition
-caloron agent validate examples/agents/backend-developer.yaml
-
-# Build its Nix environment
-caloron agent build examples/agents/backend-developer.yaml
-
-# Start a sprint with an existing DAG
-caloron start --dag examples/dag.json
-
-# Check status
-caloron status
-
-# Run retro after sprint completes
-caloron retro
+# Run a real sprint against local Gitea
+docker run -d --name gitea -p 3000:3000 gitea/gitea:1.22
+python3 examples/e2e-local/orchestrator.py "Build a Python calculator with tests"
 ```
 
-See the [Getting Started](guide/getting-started.md) guide for the full walkthrough.
+See the [Full Sprint Demo](examples/full-sprint.md) for the complete walkthrough.
 
+## Architecture
+
+```
+Human: "Build X"
+  → PO Agent generates DAG (tasks + deps + agent specs)
+  → Agent Version Store loads/creates agent configs
+  → For each task (respecting dependency order):
+      Agent writes code (sandboxed via bubblewrap)
+      → Branch pushed to Gitea
+      → PR created
+      → Reviewer reviews (may request changes → agent fixes → re-review)
+      → PR merged
+      → Feedback posted (agent's own assessment)
+  → Retro: collect feedback → KPIs → improvements
+  → Auto-evolve agents based on retro findings
+  → Learnings saved for next sprint
+```
+
+## Two Implementations
+
+| | [caloron](https://github.com/alpibrusl/caloron) | [caloron-noether](https://github.com/alpibrusl/caloron-noether) |
+|---|---|---|
+| Language | Rust + Python orchestrator | Python stages + Rust shell |
+| Architecture | Monolith daemon | Noether composition graphs |
+| Scaling | Single machine → workers | Docker Compose → Kubernetes |
+| Lines | ~10,000 (Rust) + 900 (Python) | ~1,200 (Python) + 200 (Rust) |
+| Best for | CLI tools, type safety | Enterprise, distribution |

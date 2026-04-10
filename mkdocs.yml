@@ -45,22 +45,17 @@ markdown_extensions:
 
 nav:
   - Home: index.md
+  - Getting Started: guide/getting-started.md
+  - Full Sprint Demo: examples/full-sprint.md
   - Guide:
-    - Getting Started: guide/getting-started.md
     - Core Concepts: guide/concepts.md
-    - Configuration: guide/configuration.md
     - Agent Definitions: guide/agents.md
     - Sprint Lifecycle: guide/sprint-lifecycle.md
-    - Nix Environments: guide/nix.md
-    - Noether Integration: guide/noether.md
+    - Configuration: guide/configuration.md
     - Scalability: guide/scalability.md
   - Reference:
     - CLI Commands: reference/cli.md
     - DAG Format: reference/dag-format.md
-    - Git Protocol: reference/git-protocol.md
     - Feedback Format: reference/feedback.md
-    - Label Taxonomy: reference/labels.md
-  - Examples:
-    - Full Sprint (Proven): examples/full-sprint.md
-    - DAG Simulation: examples/e2e-sprint.md
+    - Git Protocol: reference/git-protocol.md
   - Architecture: architecture.md

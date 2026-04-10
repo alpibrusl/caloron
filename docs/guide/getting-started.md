@@ -2,133 +2,84 @@
 
 ## Prerequisites
 
-- **Rust** 1.75+ (for building Caloron)
-- **Nix** 2.x+ (for agent environment isolation)
-- **Git** (agents communicate through Git)
-- **GitHub token** with `repo` and `workflow` scopes
+- **Python 3.11+** (for the orchestrator and agents)
+- **Claude Code** (your Pro subscription works, or set `ANTHROPIC_API_KEY`)
+- **Docker** (for local Gitea — optional if using GitHub)
+- **Git**
+
+Optional:
+- **Nix** (for hermetic agent environments — not required)
+- **bubblewrap** (`bwrap`) — for filesystem sandboxing
 
 ## Installation
 
 ```bash
-git clone https://github.com/caloron/caloron
+git clone https://github.com/alpibrusl/caloron
 cd caloron
 cargo build --workspace
 ```
 
-This produces two binaries:
+## Run Your First Sprint
 
-- `target/debug/caloron-daemon` — The main orchestrator (aliased as `caloron`)
-- `target/debug/caloron-harness` — The agent harness (runs inside Nix environments)
+The fastest way to see Caloron work — a real sprint against local Gitea:
 
-## Configuration
+```bash
+# Start Gitea (one-time)
+docker run -d --name gitea -p 3000:3000 gitea/gitea:1.22
 
-Create `caloron.toml` in your project root:
-
-```toml
-[project]
-name = "my-project"
-repo = "owner/repo"              # GitHub owner/repo
-meta_repo = "owner/caloron-meta" # Where agent definitions live
-
-[github]
-token_env = "GITHUB_TOKEN"       # Env var name (not the token itself)
-polling_interval_seconds = 5
-
-[llm]
-api_key_env = "ANTHROPIC_API_KEY"
-
-[llm.aliases]
-default = "claude-sonnet-4-6"
-strong = "claude-opus-4-6"
-
-[nix]
-enabled = true
-
-[supervisor]
-stall_default_threshold_minutes = 20
-max_review_cycles = 3
-
-[retro]
-enabled = true
-auto_run = true
+# Run a sprint
+python3 examples/e2e-local/orchestrator.py \
+  "Build a Python module with is_palindrome function. Include tests."
 ```
 
-Set the required environment variables:
+This will:
+1. PO Agent (Claude) generates a task DAG
+2. Agents write real code in sandboxed environments
+3. PRs created on Gitea with code reviews
+4. Reviewer catches issues → agent fixes → re-review
+5. Retro analyzes feedback and evolves agents
+
+See [Full Sprint Example](../examples/full-sprint.md) for the complete walkthrough.
+
+## Using with GitHub (instead of Gitea)
+
+Set your GitHub token:
 
 ```bash
 export GITHUB_TOKEN="ghp_..."
+export REPO="owner/repo"
+```
+
+The orchestrator works with any GitHub-compatible API.
+
+## Using API Keys (instead of Claude Pro)
+
+```bash
 export ANTHROPIC_API_KEY="sk-ant-..."
+# Or for other frameworks:
+export GOOGLE_API_KEY="..."     # for Gemini
+export OPENAI_API_KEY="..."     # for Codex
 ```
 
-## Validate an Agent
-
-Agent definitions are YAML files describing what tools and LLM configuration an agent has:
+## CLI Tools
 
 ```bash
+# Generate an agent definition
+caloron agent generate -p developer -c code-writing,python -m balanced -f claude-code
+
+# Validate an agent definition
 caloron agent validate examples/agents/backend-developer.yaml
-```
 
-```
-Agent: backend-developer v1.0
-Model: default
-Tools: github_mcp, noether, bash
-Nix packages: nodejs_20, python311, rustc, cargo
-Credentials: GITHUB_TOKEN, ANTHROPIC_API_KEY
-
-Validation: PASSED
-```
-
-## Build a Nix Environment
-
-Preview the Nix environment that will be created for an agent:
-
-```bash
-caloron agent build examples/agents/backend-developer.yaml
-```
-
-With `nix.enabled = true`, this writes a `flake.nix` and builds the environment. The Nix store caches the result, so subsequent builds are instant.
-
-## Start a Sprint
-
-```bash
-# Interactive kickoff (PO Agent generates DAG)
-caloron kickoff "implement user authentication"
-
-# Or start directly with a pre-made DAG
-caloron start --dag examples/dag.json
-```
-
-## Monitor Progress
-
-```bash
+# View sprint status
 caloron status
-```
 
-```
-Sprint: sprint-2026-04-w2
-Goal: Implement user authentication
-
-Tasks:
-  [v] task-1       JWT implementation                        DONE         (backend-1)
-  [>] task-2       Session store                             IN_PROGRESS  (backend-2)
-  [ ] task-3       Integration tests                         PENDING      (qa-1)
-
-Progress: 1/3 tasks done
-```
-
-## Run Retro
-
-After the sprint completes:
-
-```bash
+# Run retro
 caloron retro
 ```
 
-This generates a markdown report analyzing task clarity, blockers, review loops, and token efficiency.
-
 ## Next Steps
 
-- [Core Concepts](concepts.md) — Understand sprints, agents, DAGs, and the Git protocol
-- [Agent Definitions](agents.md) — Write custom agent definitions
-- [Sprint Lifecycle](sprint-lifecycle.md) — The full execution flow
-- [End-to-End Example](../examples/e2e-sprint.md) — A complete walkthrough
+- [Full Sprint Example](../examples/full-sprint.md) — proven end-to-end with real code
+- [Core Concepts](concepts.md) — sprints, agents, DAGs, Git protocol
+- [Agent Definitions](agents.md) — configure agents with 4-axis composition
+- [Scalability](scalability.md) — single machine to Kubernetes
