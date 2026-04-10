@@ -16,6 +16,8 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
+from agent_versioning import AgentVersionStore, auto_evolve_agents, print_agent_history
+
 # ── Config ──────────────────────────────────────────────────────────────────
 
 GITEA_TOKEN = os.environ.get("GITEA_TOKEN", "c50bad400bd9b8cde3e930cca052eae6ded71f7b")
@@ -560,6 +562,9 @@ def main():
     sprint_number = len(learnings["sprints"]) + 1
     po_context = build_po_context(learnings)
 
+    # Load agent version store
+    agent_store = AgentVersionStore(os.path.join(WORK, "agent_versions.json"))
+
     print("=" * 60)
     print(f"  FULL AUTONOMOUS SPRINT #{sprint_number}")
     print(f"  Backend: {BACKEND}")
@@ -568,6 +573,9 @@ def main():
         print(f"  Stages: {NOETHER_STAGES_DIR}")
     if po_context:
         print(f"  (with learnings from {len(learnings['sprints'])} previous sprint(s))")
+    # Show agent versions if any exist
+    if agent_store.agents:
+        print(f"  Agents: {len(agent_store.agents)} with version history")
     print("=" * 60)
     print()
 
@@ -605,6 +613,32 @@ Keep to 2-3 tasks. Tests depend on implementation."""
     for t in tasks:
         deps = ", ".join(t.get("depends_on", [])) or "none"
         print(f"  {t['id']}: {t['title']} (deps: {deps})")
+
+    # Register agents in version store (or load existing versions)
+    print()
+    print("  Agents:")
+    for t in tasks:
+        tid = t["id"]
+        spec = {
+            "personality": "developer",
+            "model": t.get("model", "balanced"),
+            "framework": t.get("framework", "claude-code"),
+            "capabilities": t.get("capabilities", ["code-writing", "python"]),
+            "extra_instructions": "",
+        }
+        version = agent_store.register(tid, spec, f"sprint-{sprint_number}")
+
+        # If agent has evolved, use the latest version's spec
+        current = agent_store.current(tid)
+        if current and current["version"] != "1.0":
+            t["framework"] = current.get("framework", t.get("framework", "claude-code"))
+            # Prepend evolved instructions to agent prompt
+            evolved_instructions = current.get("extra_instructions", "")
+            if evolved_instructions:
+                t["agent_prompt"] = f"{evolved_instructions}\n\n{t.get('agent_prompt', t['title'])}"
+            print(f"    {tid}: v{current['version']} (evolved — {current['model']}, [{', '.join(current.get('capabilities', []))}])")
+        else:
+            print(f"    {tid}: v{version} (new)")
     print()
 
     # ── Step 2: Create issues ───────────────────────────────────────────
@@ -808,6 +842,44 @@ Please fix the issues described above. Only modify files in src/ and tests/. Whe
     print()
     sprint_start_iso = datetime.fromtimestamp(sprint_start, tz=timezone.utc).isoformat()
     run_retro(list(issue_map.values()), supervisor, sprint_time, sprint_start_iso)
+
+    # ── Step 9: Auto-evolve agents based on retro ──────────────────────
+    print("--- Step 9: Agent Evolution ---")
+
+    # Build retro summary for evolution decisions
+    total_tasks = len(feedback_data)
+    failed_tasks = sum(1 for f in feedback_data if f["assessment"] == "failed")
+    all_blockers = []
+    for f in feedback_data:
+        all_blockers.extend(f.get("blockers", []))
+
+    retro_summary = {
+        "avg_clarity": 7 if not all_blockers else 4,
+        "failure_rate": failed_tasks / max(total_tasks, 1),
+        "supervisor_events": len(supervisor.events),
+        "avg_review_cycles": sum(1 for f in feedback_data if f.get("blockers")) / max(total_tasks, 1),
+        "blockers": all_blockers,
+    }
+
+    # Record performance for each agent at their current version
+    for f in feedback_data:
+        agent_store.record_performance(f["task_id"], {
+            "clarity": 7 if not f.get("blockers") else 4,
+            "completion_rate": 1.0 if f["assessment"] == "completed" else 0.0,
+            "review_cycles": 1 + len(f.get("blockers", [])),
+            "time_s": f["time_s"],
+        })
+
+    # Auto-evolve
+    changes = auto_evolve_agents(agent_store, retro_summary, f"sprint-{sprint_number}")
+    if not changes:
+        print("  No evolution needed — agents performing well")
+    print()
+
+    # Show agent history
+    print("--- Agent Versions ---")
+    for agent_id in agent_store.agents:
+        print_agent_history(agent_store, agent_id)
 
     # ── Gitea state ─────────────────────────────────────────────────────
     print("--- Gitea State ---")
