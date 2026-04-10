@@ -1,90 +1,41 @@
-# Live Demos
+# Live Demo
 
-Real recordings of Caloron sprints — not simulations.
+Real recording of a Caloron sprint — not a simulation.
 
 ## Full Sprint: Charging Optimizer
 
-PO Agent generates a DAG, agents build a charging window optimizer for electric trucks, reviewer catches a bug, agent fixes it.
+PO Agent generates a DAG, agents build a charging window optimizer for electric trucks, reviewer catches a bug, code gets merged on Gitea.
 
-<div id="demo-sprint"></div>
-<script>
-  AsciinemaPlayer.create('https://alpibrusl.github.io/caloron/casts/full-sprint.cast', 
-    document.getElementById('demo-sprint'), {
-    cols: 120, rows: 35, speed: 2, theme: 'monokai', idleTimeLimit: 2
-  });
-</script>
+[![asciicast](https://asciinema.org/a/ZsYVCt7uFAiTnEoP.svg)](https://asciinema.org/a/ZsYVCt7uFAiTnEoP)
 
-**What happens:**
+**What happens (5 minutes):**
 
-1. PO Agent → 2 tasks (optimizer + tests) with dependency
-2. Agent writes `src/optimizer.py` — sliding window algorithm
-3. PR created on Gitea → Reviewer: "CHANGES_NEEDED: no tests"
-4. Agent fixes → adds tests → Reviewer: "APPROVED"
-5. PR merged → Task 2 unblocked → tests agent runs
-6. Retro: clarity 7/10, 1 review cycle, agents evolve
+1. **PO Agent** analyzes the goal → generates 2 tasks with dependency
+2. **Agent 1** writes `src/optimizer.py` — sliding window + SoC validation
+3. **PR created on Gitea** → Reviewer: "CHANGES_NEEDED: crashes when..."
+4. **Agent 2** writes `tests/test_optimizer.py`
+5. **PR created** → Reviewer: "APPROVED" → **merged**
+6. **Sprint retro** — KPIs, blockers, audit trail
+
+All real: Claude writes code, Gitea has the PRs, the reviewer catches a real bug.
 
 ---
 
-## Supervisor in Action
-
-What happens when an agent stalls? The supervisor detects it, probes, restarts, and escalates.
-
-<div id="demo-supervisor"></div>
-<script>
-  AsciinemaPlayer.create('https://alpibrusl.github.io/caloron/casts/supervisor.cast', 
-    document.getElementById('demo-supervisor'), {
-    cols: 120, rows: 25, speed: 2, theme: 'monokai', idleTimeLimit: 2
-  });
-</script>
-
-**What happens:**
-
-1. Agent timeout set to 5 seconds (forcing stalls)
-2. Supervisor: PROBE → posts comment on Gitea issue
-3. Supervisor: RESTART → retries with simplified prompt
-4. Task marked as FAILED → feedback posted
-5. Retro: "4 supervisor interventions, reduce agent stalls"
-
----
-
-## Sprint-Over-Sprint Learning
-
-Sprint 2 PO receives learnings from Sprint 1 — task specs improve, review cycles decrease.
-
-<div id="demo-learning"></div>
-<script>
-  AsciinemaPlayer.create('https://alpibrusl.github.io/caloron/casts/learning.cast', 
-    document.getElementById('demo-learning'), {
-    cols: 120, rows: 30, speed: 2, theme: 'monokai', idleTimeLimit: 2
-  });
-</script>
-
-**What happens:**
-
-1. Sprint 1: clarity 5.5/10, reviewer rejects → agent fixes → approved
-2. Retro saves learnings: "improve task specs"
-3. Sprint 2: PO receives learnings → clearer tasks
-4. Sprint 2: clarity 7.0/10, approved on first review
-5. Agents evolved v1.0 → v1.1 (added self-review instruction)
-
----
-
-## Recording Your Own Demos
+## Recording Your Own
 
 ```bash
-# Install asciinema
-pip install asciinema
+# Record a sprint with any goal
+asciinema rec my-demo.cast \
+  -c "python3 examples/e2e-local/orchestrator.py 'your goal here'"
 
-# Record a sprint
-asciinema rec my-demo.cast -c "python3 examples/e2e-local/orchestrator.py 'your goal here'"
+# Play it back (2x speed recommended)
+asciinema play my-demo.cast --speed 2
 
-# Play it back
-asciinema play my-demo.cast
-
-# Upload to asciinema.org
+# Upload to share
 asciinema upload my-demo.cast
 ```
 
-!!! note
-    The demo recordings use local Gitea and Claude Pro subscription.
-    No API keys or external services required.
+## Also See
+
+- [caloron-noether demo](https://asciinema.org/a/GOMIILJSz8ZpeF0R) — same sprint via Noether stages
+- [Full Sprint Walkthrough](examples/full-sprint.md) — detailed text explanation
