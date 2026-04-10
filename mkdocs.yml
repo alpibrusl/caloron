@@ -1,6 +1,12 @@
 site_name: Caloron
 site_description: Multi-Agent Orchestration Platform
-repo_url: https://github.com/caloron/caloron
+repo_url: https://github.com/alpibrusl/caloron
+
+extra_css:
+  - https://cdn.jsdelivr.net/npm/asciinema-player@3/dist/bundle/asciinema-player.css
+
+extra_javascript:
+  - https://cdn.jsdelivr.net/npm/asciinema-player@3/dist/bundle/asciinema-player.min.js
 
 theme:
   name: material
@@ -45,6 +51,7 @@ markdown_extensions:
 
 nav:
   - Home: index.md
+  - Live Demos: demo.md
   - Getting Started: guide/getting-started.md
   - Full Sprint Demo: examples/full-sprint.md
   - Guide:

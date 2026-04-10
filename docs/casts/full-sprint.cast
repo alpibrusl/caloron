@@ -1,0 +1,7 @@
+{"version": 2, "width": 80, "height": 24, "timestamp": 1775817683, "idle_time_limit": 3.0, "env": {"SHELL": "/bin/bash", "TERM": "xterm-256color"}, "title": "Caloron: Full Autonomous Sprint"}
+[2.188995, "o", "\u001b[H\u001b[2J\u001b[3J"]
+[2.189734, "o", "\r\n\u001b[1m  ╔══════════════════════════════════════════════╗\u001b[0m\r\n\u001b[1m  ║          \u001b[36mCALORON\u001b[0m\u001b[1m — Multi-Agent Sprint         ║\u001b[0m\r\n\u001b[1m  ║    Agents collaborate through Git to build   ║\u001b[0m\r\n\u001b[1m  ║               software autonomously          ║\u001b[0m\r\n\u001b[1m  ╚══════════════════════════════════════════════╝\u001b[0m\r\n\r\n"]
+[4.192282, "o", "\r\n\u001b[1m\u001b[36m▸ Goal: Build a Python charging optimizer for electric trucks\u001b[0m\r\n"]
+[6.205298, "o", "\r\n\u001b[1m\u001b[36m▸ Step 1: PO Agent plans the sprint\u001b[0m\r\n"]
+[32.124101, "o", "  1. Implement charging window optimizer with SoC validation\r\n     depends on: none\r\n  2. Write pytest tests for all functions and edge cases\r\n     depends on: 1\r\n"]
+[34.151421, "o", "\r\n\u001b[1m\u001b[36m▸ Step 2: Agent works on ''\u001b[0m\r\n"]
