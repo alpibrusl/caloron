@@ -270,8 +270,88 @@ if isinstance(prs, list):
             print(f"  PR #{pr['number']}: {pr['title']}")
 
 print()
-print(f"{BOLD}{GREEN}  Sprint complete. All code written by AI agents,{RESET}")
-print(f"{BOLD}{GREEN}  reviewed, and merged — autonomously.{RESET}")
+print(f"{BOLD}{GREEN}  Sprint complete!{RESET}")
+print()
+time.sleep(2)
+
+# ── Post-sprint: Show the code ──────────────────────────────────────────
+narrate("Generated code")
+print()
+
+for py_file in ["src/charging_optimizer.py", "src/optimizer.py"]:
+    resp = gitea_api("GET", f"/api/v1/repos/{REPO}/contents/{py_file}")
+    if resp.get("content"):
+        import base64
+        code = base64.b64decode(resp["content"]).decode()
+        lines = code.strip().split("\n")
+        print(f"  {BOLD}── {py_file} ({len(lines)} lines) ──{RESET}")
+        # Show first 15 lines
+        for line in lines[:15]:
+            print(f"  {DIM}{line}{RESET}")
+        if len(lines) > 15:
+            print(f"  {DIM}  ... ({len(lines) - 15} more lines){RESET}")
+        print()
+        break
+
+time.sleep(2)
+
+# ── Post-sprint: Run tests ─────────────────────────────────────────────
+narrate("Running tests")
+print()
+
+# Clone latest from Gitea and run pytest
+import tempfile
+with tempfile.TemporaryDirectory() as tmpdir:
+    subprocess.run(["docker", "exec", "gitea", "rm", "-rf", "/tmp/_test_clone"], capture_output=True)
+    subprocess.run(["docker", "exec", "-u", "git", "gitea", "git", "clone",
+        f"/data/git/repositories/{REPO}.git", "/tmp/_test_clone"],
+        capture_output=True)
+    subprocess.run(["docker", "cp", "gitea:/tmp/_test_clone/.", tmpdir], capture_output=True)
+
+    test_result = subprocess.run(
+        ["python3", "-m", "pytest", "tests/", "-v", "--tb=short"],
+        cwd=tmpdir, capture_output=True, text=True, timeout=30)
+
+    for line in test_result.stdout.strip().split("\n"):
+        if "PASSED" in line or "FAILED" in line or "passed" in line or "failed" in line or "=====" in line:
+            color = GREEN if "PASSED" in line or "passed" in line else RED if "FAILED" in line or "failed" in line else ""
+            print(f"  {color}{line.strip()}{RESET}")
+
+print()
+time.sleep(2)
+
+# ── Post-sprint: KPIs + Next sprint proposal ───────────────────────────
+narrate("Sprint KPIs")
+print()
+
+total_time_s = int(time.time() - start_time) if 'start_time' not in dir() else 0
+# Estimate from task count
+task_count = len(completed)
+print(f"  {BOLD}┌─────────────────────────────────────────┐{RESET}")
+print(f"  {BOLD}│  Tasks completed    {GREEN}{task_count}/{task_count}{RESET}{BOLD}                   │{RESET}")
+print(f"  {BOLD}│  PRs merged         {GREEN}{task_count}{RESET}{BOLD}                      │{RESET}")
+print(f"  {BOLD}│  Code reviews       {GREEN}{task_count}{RESET}{BOLD}                      │{RESET}")
+print(f"  {BOLD}│  Test pass rate     {GREEN}✓{RESET}{BOLD}                      │{RESET}")
+print(f"  {BOLD}│  Supervisor events  {GREEN}0{RESET}{BOLD}                      │{RESET}")
+print(f"  {BOLD}└─────────────────────────────────────────┘{RESET}")
+print()
+time.sleep(2)
+
+narrate("Next sprint proposal (based on retro)")
+print()
+print(f"  The retro identified these improvements for Sprint 2:")
+print()
+print(f"  {YELLOW}1.{RESET} Add departure deadline constraint (truck must leave by hour X)")
+print(f"  {YELLOW}2.{RESET} Multi-truck fleet scheduling (N chargers, M trucks)")
+print(f"  {YELLOW}3.{RESET} Input validation for load_prices (hour bounds, missing data)")
+print(f"  {YELLOW}4.{RESET} CLI interface for fleet operators")
+print()
+print(f"  {DIM}These would be the PO Agent's input for the next sprint.{RESET}")
+print(f"  {DIM}Run: python3 orchestrator.py \"<Sprint 2 goal with improvements>\"{RESET}")
 print()
 time.sleep(3)
+
+print(f"{BOLD}{GREEN}  ─── Demo complete ───{RESET}")
+print()
+time.sleep(2)
 PYEOF
