@@ -72,6 +72,13 @@ FRAMEWORKS = {
         "api_key_env": "OPENAI_API_KEY",
         "api_key_flag": None,
     },
+    "open-code": {
+        "cmd": "open-code",
+        "args": ["--non-interactive"],
+        "prompt_flag": "-p",
+        "api_key_env": "ANTHROPIC_API_KEY",
+        "api_key_flag": None,
+    },
 }
 
 

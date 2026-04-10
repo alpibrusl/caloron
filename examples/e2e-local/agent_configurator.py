@@ -36,7 +36,11 @@ def configure_agent(
     elif framework == "cursor-cli":
         configure_cursor(worktree, task, skills, mcp_urls)
     elif framework == "gemini-cli":
-        configure_gemini(worktree, task, skills)
+        configure_gemini(worktree, task, skills, mcp_urls)
+    elif framework == "codex-cli":
+        configure_codex(worktree, task, skills, mcp_urls)
+    elif framework == "open-code":
+        configure_open_code(worktree, task, skills, mcp_urls)
     elif framework == "aider":
         configure_aider(worktree, task, skills)
 
@@ -137,18 +141,143 @@ def configure_gemini(
     worktree: str,
     task: dict,
     skills: list[str],
+    mcp_urls: list[dict],
 ):
-    """Configure Gemini CLI with system instruction file."""
-    instructions = [f"Task: {task.get('title', '')}"]
-    instructions.append(f"Skills: {', '.join(skills)}")
-    instructions.append("")
+    """Configure Gemini CLI with GEMINI.md and MCP settings.
+
+    Gemini CLI reads:
+    - GEMINI.md (like CLAUDE.md — system instructions)
+    - .gemini/settings.json for MCP servers
+    """
+    # ── GEMINI.md — skill instructions ──────────────────────────────────
+    lines = ["# Agent Configuration", ""]
+    lines.append(f"Task: {task.get('title', '')}")
+    lines.append(f"Skills: {', '.join(skills)}")
+    lines.append("")
 
     for skill_name in skills:
         inst = SKILL_INSTRUCTIONS.get(skill_name)
         if inst:
-            instructions.append(inst)
+            lines.append(f"## {skill_name}")
+            lines.append(inst)
+            lines.append("")
 
-    Path(os.path.join(worktree, ".gemini_instructions")).write_text("\n".join(instructions))
+    Path(os.path.join(worktree, "GEMINI.md")).write_text("\n".join(lines))
+
+    # ── MCP config for Gemini ───────────────────────────────────────────
+    if mcp_urls:
+        gemini_dir = os.path.join(worktree, ".gemini")
+        os.makedirs(gemini_dir, exist_ok=True)
+        mcp_config = {"mcpServers": {}}
+        for mcp in mcp_urls:
+            name = mcp["name"]
+            url = mcp["url"]
+            if url.startswith("http://") or url.startswith("https://"):
+                mcp_config["mcpServers"][name] = {
+                    "command": "npx",
+                    "args": ["-y", "mcp-remote", url],
+                }
+            elif url.startswith("postgresql://") or url.startswith("postgres://"):
+                mcp_config["mcpServers"][name] = {
+                    "command": "npx",
+                    "args": ["-y", "@modelcontextprotocol/server-postgres", url],
+                }
+        Path(os.path.join(gemini_dir, "settings.json")).write_text(
+            json.dumps(mcp_config, indent=2))
+
+
+def configure_codex(
+    worktree: str,
+    task: dict,
+    skills: list[str],
+    mcp_urls: list[dict],
+):
+    """Configure OpenAI Codex CLI.
+
+    Codex CLI reads:
+    - AGENTS.md (system instructions, like CLAUDE.md)
+    - codex.json for MCP servers
+    """
+    # ── AGENTS.md ───────────────────────────────────────────────────────
+    lines = ["# Agent Configuration", ""]
+    lines.append(f"Task: {task.get('title', '')}")
+    lines.append(f"Skills: {', '.join(skills)}")
+    lines.append("")
+
+    for skill_name in skills:
+        inst = SKILL_INSTRUCTIONS.get(skill_name)
+        if inst:
+            lines.append(f"## {skill_name}")
+            lines.append(inst)
+            lines.append("")
+
+    Path(os.path.join(worktree, "AGENTS.md")).write_text("\n".join(lines))
+
+    # ── MCP config ──────────────────────────────────────────────────────
+    if mcp_urls:
+        mcp_config = {"mcpServers": {}}
+        for mcp in mcp_urls:
+            name = mcp["name"]
+            url = mcp["url"]
+            if url.startswith("http://") or url.startswith("https://"):
+                mcp_config["mcpServers"][name] = {
+                    "command": "npx",
+                    "args": ["-y", "mcp-remote", url],
+                }
+            elif url.startswith("postgresql://") or url.startswith("postgres://"):
+                mcp_config["mcpServers"][name] = {
+                    "command": "npx",
+                    "args": ["-y", "@modelcontextprotocol/server-postgres", url],
+                }
+        Path(os.path.join(worktree, "codex.json")).write_text(
+            json.dumps(mcp_config, indent=2))
+
+
+def configure_open_code(
+    worktree: str,
+    task: dict,
+    skills: list[str],
+    mcp_urls: list[dict],
+):
+    """Configure open-code (open-source VS Code CLI agent).
+
+    open-code reads:
+    - .open-code/instructions.md for system instructions
+    - .open-code/mcp.json for MCP servers
+    """
+    oc_dir = os.path.join(worktree, ".open-code")
+    os.makedirs(oc_dir, exist_ok=True)
+
+    # ── Instructions ────────────────────────────────────────────────────
+    lines = ["# Agent Configuration", ""]
+    lines.append(f"Task: {task.get('title', '')}")
+    lines.append(f"Skills: {', '.join(skills)}")
+    lines.append("")
+
+    for skill_name in skills:
+        inst = SKILL_INSTRUCTIONS.get(skill_name)
+        if inst:
+            lines.append(f"## {skill_name}")
+            lines.append(inst)
+            lines.append("")
+
+    Path(os.path.join(oc_dir, "instructions.md")).write_text("\n".join(lines))
+
+    # ── MCP config ──────────────────────────────────────────────────────
+    if mcp_urls:
+        mcp_config = {"mcpServers": {}}
+        for mcp in mcp_urls:
+            name = mcp["name"]
+            url = mcp["url"]
+            if url.startswith("http://") or url.startswith("https://"):
+                mcp_config["mcpServers"][name] = {"url": url}
+            elif url.startswith("postgresql://") or url.startswith("postgres://"):
+                mcp_config["mcpServers"][name] = {
+                    "command": "npx",
+                    "args": ["-y", "@modelcontextprotocol/server-postgres", url],
+                }
+        Path(os.path.join(oc_dir, "mcp.json")).write_text(
+            json.dumps(mcp_config, indent=2))
 
 
 def configure_aider(
@@ -171,12 +300,11 @@ def configure_aider(
     if conventions:
         config["conventions"] = "\n".join(conventions)
 
-    import yaml
     try:
+        import yaml
         Path(os.path.join(worktree, ".aider.conf.yml")).write_text(
             yaml.dump(config, default_flow_style=False))
     except ImportError:
-        # No yaml module — write as JSON
         Path(os.path.join(worktree, ".aider.conf.json")).write_text(
             json.dumps(config, indent=2))
 
@@ -264,7 +392,14 @@ def print_config_summary(worktree: str, framework: str):
         "CLAUDE.md": os.path.exists(os.path.join(worktree, "CLAUDE.md")),
         ".mcp.json": os.path.exists(os.path.join(worktree, ".mcp.json")),
         ".cursorrules": os.path.exists(os.path.join(worktree, ".cursorrules")),
-        ".gemini_instructions": os.path.exists(os.path.join(worktree, ".gemini_instructions")),
+        ".cursor/mcp.json": os.path.exists(os.path.join(worktree, ".cursor", "mcp.json")),
+        "GEMINI.md": os.path.exists(os.path.join(worktree, "GEMINI.md")),
+        ".gemini/settings.json": os.path.exists(os.path.join(worktree, ".gemini", "settings.json")),
+        "AGENTS.md": os.path.exists(os.path.join(worktree, "AGENTS.md")),
+        "codex.json": os.path.exists(os.path.join(worktree, "codex.json")),
+        ".open-code/instructions.md": os.path.exists(os.path.join(worktree, ".open-code", "instructions.md")),
+        ".open-code/mcp.json": os.path.exists(os.path.join(worktree, ".open-code", "mcp.json")),
+        ".aider.conf.yml": os.path.exists(os.path.join(worktree, ".aider.conf.yml")),
     }
     generated = [k for k, v in configs.items() if v]
     if generated:

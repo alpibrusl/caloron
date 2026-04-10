@@ -93,7 +93,7 @@ class SkillStore:
             "github-pr-management": {
                 "type": "mcp",
                 "description": "Create/review PRs, manage issues, read repos on GitHub/Gitea",
-                "frameworks": ["claude-code", "cursor-cli", "gemini-cli"],
+                "frameworks": ["claude-code", "cursor-cli", "gemini-cli", "codex-cli", "open-code"],
                 "mcp_url": "https://github.mcp.claude.com/mcp",
                 "credentials": ["GITHUB_TOKEN"],
                 "tags": ["git", "code", "collaboration"],
@@ -101,7 +101,7 @@ class SkillStore:
             "git-operations": {
                 "type": "skill",
                 "description": "Git clone, branch, commit, push, merge, rebase",
-                "frameworks": ["claude-code", "cursor-cli", "gemini-cli", "aider", "codex-cli"],
+                "frameworks": ["claude-code", "cursor-cli", "gemini-cli", "aider", "codex-cli", "open-code"],
                 "nix_packages": ["git"],
                 "tags": ["git", "code"],
             },
@@ -110,7 +110,7 @@ class SkillStore:
             "python-development": {
                 "type": "skill",
                 "description": "Write Python code with type hints, use pip/poetry",
-                "frameworks": ["claude-code", "cursor-cli", "gemini-cli", "aider", "codex-cli"],
+                "frameworks": ["claude-code", "cursor-cli", "gemini-cli", "aider", "codex-cli", "open-code"],
                 "nix_packages": ["python311"],
                 "tags": ["code", "python"],
             },
@@ -124,7 +124,7 @@ class SkillStore:
             "typescript-development": {
                 "type": "skill",
                 "description": "Write TypeScript/JavaScript, use npm/pnpm",
-                "frameworks": ["claude-code", "cursor-cli", "gemini-cli", "aider"],
+                "frameworks": ["claude-code", "cursor-cli", "gemini-cli", "aider", "codex-cli", "open-code"],
                 "nix_packages": ["nodejs_20"],
                 "tags": ["code", "typescript", "javascript", "frontend"],
             },
@@ -133,14 +133,14 @@ class SkillStore:
             "pytest-testing": {
                 "type": "skill",
                 "description": "Write and run pytest tests with parametrize, fixtures, mocks",
-                "frameworks": ["claude-code", "cursor-cli", "gemini-cli", "aider"],
+                "frameworks": ["claude-code", "cursor-cli", "gemini-cli", "aider", "codex-cli", "open-code"],
                 "nix_packages": ["python311"],
                 "tags": ["testing", "python"],
             },
             "jest-testing": {
                 "type": "skill",
                 "description": "Write and run Jest tests for TypeScript/JavaScript",
-                "frameworks": ["claude-code", "cursor-cli"],
+                "frameworks": ["claude-code", "cursor-cli", "open-code"],
                 "nix_packages": ["nodejs_20"],
                 "tags": ["testing", "typescript", "javascript"],
             },
@@ -149,14 +149,14 @@ class SkillStore:
             "data-analysis-pandas": {
                 "type": "skill",
                 "description": "Load, transform, analyze data with pandas, numpy",
-                "frameworks": ["claude-code", "cursor-cli", "gemini-cli"],
+                "frameworks": ["claude-code", "cursor-cli", "gemini-cli", "codex-cli", "open-code"],
                 "nix_packages": ["python311"],
                 "tags": ["data", "python", "analytics"],
             },
             "sql-database": {
                 "type": "mcp",
                 "description": "Query and modify PostgreSQL/SQLite databases",
-                "frameworks": ["claude-code", "cursor-cli"],
+                "frameworks": ["claude-code", "cursor-cli", "open-code"],
                 "mcp_url": "postgresql://...",
                 "nix_packages": ["postgresql_16"],
                 "credentials": ["DATABASE_URL"],
@@ -173,13 +173,13 @@ class SkillStore:
             "browser-automation": {
                 "type": "skill",
                 "description": "Browse websites, extract content, take screenshots",
-                "frameworks": ["claude-code", "cursor-cli"],
+                "frameworks": ["claude-code", "cursor-cli", "open-code"],
                 "tags": ["research", "web", "browser"],
             },
             "rest-api-development": {
                 "type": "skill",
                 "description": "Build REST APIs with FastAPI/Flask/Express",
-                "frameworks": ["claude-code", "cursor-cli", "gemini-cli", "aider"],
+                "frameworks": ["claude-code", "cursor-cli", "gemini-cli", "aider", "codex-cli", "open-code"],
                 "nix_packages": ["python311"],
                 "tags": ["api", "web", "backend"],
             },
@@ -188,14 +188,14 @@ class SkillStore:
             "docker-management": {
                 "type": "skill",
                 "description": "Write Dockerfiles, docker-compose, manage containers",
-                "frameworks": ["claude-code", "cursor-cli"],
+                "frameworks": ["claude-code", "cursor-cli", "open-code"],
                 "nix_packages": [],
                 "tags": ["infra", "devops", "docker"],
             },
             "kubernetes-management": {
                 "type": "skill",
                 "description": "Write K8s manifests, Helm charts, kubectl operations",
-                "frameworks": ["claude-code", "cursor-cli"],
+                "frameworks": ["claude-code", "cursor-cli", "open-code"],
                 "nix_packages": [],
                 "tags": ["infra", "devops", "kubernetes"],
             },
