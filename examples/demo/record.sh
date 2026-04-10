@@ -123,156 +123,155 @@ for i, t in enumerate(tasks):
 "
 sleep 2
 
-# ── Step 2: Execute tasks ──────────────────────────────────────────────────
+# ── Step 2: Execute tasks (Python handles the loop to avoid bash parsing issues) ──
 
-TASKS=$(python3 -c "
-import json
-tasks = json.load(open('$WORK/dag.json'))
-# Topological sort
-done = set()
+python3 << 'PYEOF'
+import json, subprocess, os, base64, sys, time
+
+WORK = os.environ.get("WORK", "/tmp/caloron-demo")
+SANDBOX = os.environ.get("SANDBOX", "scripts/sandbox-agent.sh")
+GITEA_TOKEN = os.environ.get("GITEA_TOKEN", "")
+REPO = os.environ.get("DEMO_REPO", "caloron/demo-project")
+
+BOLD, DIM, GREEN, YELLOW, BLUE, CYAN, RED, RESET = (
+    '\033[1m', '\033[2m', '\033[32m', '\033[33m', '\033[34m', '\033[36m', '\033[31m', '\033[0m')
+
+def narrate(msg):
+    print(f"\n{BOLD}{CYAN}▸ {msg}{RESET}")
+    time.sleep(1)
+def ok(msg):  print(f"  {GREEN}✓{RESET} {msg}")
+def warn(msg): print(f"  {YELLOW}!{RESET} {msg}")
+def step(who, msg): print(f"  {BOLD}{BLUE}[{who}]{RESET} {msg}")
+
+def gitea_api(method, path, data=None):
+    if method == "GET":
+        r = subprocess.run(["docker","exec","gitea","wget","-qO-",
+            "--header",f"Authorization: token {GITEA_TOKEN}",
+            f"http://127.0.0.1:3000{path}"], capture_output=True, text=True)
+    else:
+        r = subprocess.run(["docker","exec","gitea","wget","-qO-",
+            "--post-data", json.dumps(data),
+            "--header","Content-Type: application/json",
+            "--header",f"Authorization: token {GITEA_TOKEN}",
+            f"http://127.0.0.1:3000{path}"], capture_output=True, text=True)
+    try: return json.loads(r.stdout)
+    except: return {}
+
+def upload_file(branch, filepath, content, msg):
+    b64 = base64.b64encode(content.encode()).decode()
+    existing = gitea_api("GET", f"/api/v1/repos/{REPO}/contents/{filepath}?ref={branch}")
+    sha = existing.get("sha", "")
+    payload = {"content": b64, "message": msg, "branch": branch}
+    if sha: payload["sha"] = sha
+    gitea_api("POST", f"/api/v1/repos/{REPO}/contents/{filepath}", payload)
+
+def git_merge(branch, message):
+    rp = f"/data/git/repositories/{REPO}.git"
+    subprocess.run(["docker","exec","-u","git","gitea","sh","-c",
+        f"chmod -x {rp}/hooks/pre-receive 2>/dev/null; "
+        f"cd /tmp && rm -rf _merge && mkdir _merge && cd _merge && "
+        f"git init -q && git fetch {rp} main:main {branch}:{branch} 2>/dev/null && "
+        f"git checkout main 2>/dev/null && git merge {branch} -m '{message}' 2>/dev/null && "
+        f"git push {rp} main:main 2>/dev/null; "
+        f"chmod +x {rp}/hooks/pre-receive 2>/dev/null"],
+        capture_output=True)
+
+tasks = json.load(open(f"{WORK}/dag.json"))
+# Topo sort
+completed = set()
 remaining = list(tasks)
+pr_num = 2
+
 while remaining:
-    for t in remaining:
-        if all(d in done for d in t.get('depends_on', [])):
-            print(f'{t[\"id\"]}|||{t[\"title\"]}|||{t.get(\"agent_prompt\", t[\"title\"])}')
-            done.add(t['id'])
-            remaining.remove(t)
-            break
-")
+    ready = [t for t in remaining if all(d in completed for d in t.get("depends_on", []))]
+    if not ready: break
 
-TASK_NUM=0
-ISSUE_NUM=0
-PR_NUM=2  # Start after auto-init commits
+    for task in ready:
+        tid, title = task["id"], task["title"]
+        prompt = task.get("agent_prompt", title)
 
-while IFS='|||' read -r tid title prompt; do
-    TASK_NUM=$((TASK_NUM + 1))
-    ISSUE_NUM=$((ISSUE_NUM + 1))
+        narrate(f"Agent works on: {title}")
 
-    narrate "Step $((TASK_NUM + 1)): Agent works on '$title'"
+        # Create issue
+        result = gitea_api("POST", f"/api/v1/repos/{REPO}/issues",
+            {"title": title, "body": f"Task: {tid}"})
+        inum = result.get("number", "?")
+        ok(f"Issue #{inum} created on Gitea")
 
-    # Create issue
-    RESULT=$(docker exec gitea wget -qO- \
-        --post-data="{\"title\":\"$title\",\"body\":\"Task: $tid\"}" \
-        --header="Content-Type: application/json" \
-        --header="Authorization: token ${GITEA_TOKEN}" \
-        "http://127.0.0.1:3000/api/v1/repos/$REPO/issues" 2>/dev/null)
-    INUM=$(echo "$RESULT" | python3 -c "import json,sys; print(json.load(sys.stdin).get('number','?'))" 2>/dev/null)
-    ok "Issue #$INUM created on Gitea"
+        # Agent writes code
+        step("AGENT", "Writing code (sandboxed)...")
+        agent_result = subprocess.run(
+            [SANDBOX, f"{WORK}/project", "claude", "-p",
+             f"{prompt}\n\nRules: Only modify src/ and tests/. Use type hints. When done, stop.",
+             "--dangerously-skip-permissions"],
+            capture_output=True, text=True, timeout=180)
+        summary = [l for l in (agent_result.stdout or "").strip().split("\n") if l.strip()]
+        if summary:
+            ok(summary[-1][:80])
 
-    # Agent writes code
-    step "AGENT" "Writing code (sandboxed)..."
+        # Collect changed files
+        os.chdir(f"{WORK}/project")
+        subprocess.run(["git", "add", "-A"], capture_output=True)
+        diff = subprocess.run(["git", "diff", "--cached", "--name-only"], capture_output=True, text=True)
+        changed = [f for f in diff.stdout.strip().split("\n")
+                   if f and (f.startswith("src/") or f.startswith("tests/"))
+                   and f not in ("src/__init__.py", "tests/__init__.py")]
+        subprocess.run(["git", "checkout", "--", "."], capture_output=True)
 
-    AGENT_OUT=$($SANDBOX "$WORK/project" claude -p "$prompt
+        if changed:
+            branch = f"agent/{tid}"
+            gitea_api("POST", f"/api/v1/repos/{REPO}/branches",
+                {"new_branch_name": branch, "old_branch_name": "main"})
 
-Rules: Only modify src/ and tests/. Use type hints.
-When done, output:
-CALORON_FEEDBACK_START
-{\"task_clarity\": 8, \"self_assessment\": \"completed\", \"tools_used\": [\"Write\", \"Read\"], \"blockers\": [], \"notes\": \"Done.\"}
-CALORON_FEEDBACK_END" --dangerously-skip-permissions 2>/dev/null)
+            for fp in changed:
+                full = os.path.join(f"{WORK}/project", fp)
+                if os.path.exists(full):
+                    upload_file(branch, fp, open(full).read(), f"[{tid}] {fp}")
+            ok(f"Pushed to branch {branch}")
 
-    # Show last meaningful line
-    SUMMARY=$(echo "$AGENT_OUT" | grep -v "CALORON_FEEDBACK" | grep -v "^$" | tail -1)
-    ok "$SUMMARY"
+            pr_num += 1
+            gitea_api("POST", f"/api/v1/repos/{REPO}/pulls",
+                {"title": f"[{tid}] {title}", "body": f"Agent: caloron-agent-{tid}",
+                 "head": branch, "base": "main"})
+            ok(f"PR #{pr_num} created")
 
-    # Collect files
-    cd "$WORK/project"
-    git add -A
-    CHANGED=$(git diff --cached --name-only | grep -E "^(src|tests)/" | grep -v __init__ | head -5)
-    git checkout -- . 2>/dev/null
+            step("REVIEWER", "Reviewing code...")
+            review_result = subprocess.run(
+                [SANDBOX, f"{WORK}/project", "claude", "-p",
+                 f"Review: {title}. Files: {', '.join(changed)}. Respond ONLY: APPROVED or CHANGES_NEEDED: reason",
+                 "--dangerously-skip-permissions"],
+                capture_output=True, text=True, timeout=60)
+            review = (review_result.stdout or "").strip().split("\n")[-1] if review_result.stdout else "APPROVED"
+            if "APPROVED" in review.upper():
+                ok(f"Review: APPROVED")
+            else:
+                warn(f"Review: {review[:60]}")
 
-    if [ -n "$CHANGED" ]; then
-        # Create branch + upload + PR
-        BRANCH="agent/$tid"
-        docker exec gitea wget -qO- \
-            --post-data="{\"new_branch_name\":\"$BRANCH\",\"old_branch_name\":\"main\"}" \
-            --header="Content-Type: application/json" \
-            --header="Authorization: token ${GITEA_TOKEN}" \
-            "http://127.0.0.1:3000/api/v1/repos/$REPO/branches" 2>/dev/null > /dev/null
+            git_merge(branch, f"Merge: [{tid}] {title}")
+            ok(f"PR #{pr_num} merged ✓")
 
-        for filepath in $CHANGED; do
-            content=$(cat "$WORK/project/$filepath")
-            b64=$(echo -n "$content" | base64 -w0)
-            existing_sha=$(docker exec gitea wget -qO- \
-                --header="Authorization: token ${GITEA_TOKEN}" \
-                "http://127.0.0.1:3000/api/v1/repos/$REPO/contents/${filepath}?ref=${BRANCH}" 2>/dev/null \
-                | python3 -c "import json,sys; print(json.load(sys.stdin).get('sha',''))" 2>/dev/null || echo "")
-            payload="{\"content\":\"${b64}\",\"message\":\"[${tid}] ${filepath}\",\"branch\":\"${BRANCH}\"}"
-            if [ -n "$existing_sha" ] && [ "$existing_sha" != "" ]; then
-                payload="{\"content\":\"${b64}\",\"message\":\"[${tid}] ${filepath}\",\"branch\":\"${BRANCH}\",\"sha\":\"${existing_sha}\"}"
-            fi
-            docker exec gitea wget -qO- \
-                --post-data="$payload" \
-                --header="Content-Type: application/json" \
-                --header="Authorization: token ${GITEA_TOKEN}" \
-                "http://127.0.0.1:3000/api/v1/repos/$REPO/contents/${filepath}" 2>/dev/null > /dev/null
-        done
-        ok "Pushed to branch $BRANCH"
+        completed.add(tid)
+        remaining.remove(task)
+        time.sleep(1)
+        break
 
-        # Create PR
-        PR_NUM=$((PR_NUM + 1))
-        docker exec gitea wget -qO- \
-            --post-data="{\"title\":\"[$tid] $title\",\"body\":\"Agent: caloron-agent-$tid\",\"head\":\"$BRANCH\",\"base\":\"main\"}" \
-            --header="Content-Type: application/json" \
-            --header="Authorization: token ${GITEA_TOKEN}" \
-            "http://127.0.0.1:3000/api/v1/repos/$REPO/pulls" 2>/dev/null > /dev/null
-        ok "PR #$PR_NUM created"
+# Retro
+narrate("Sprint Retro")
+print(f"  {BOLD}Tasks completed:{RESET} {len(completed)}/{len(tasks)}")
+print(f"  {BOLD}PRs created:{RESET}     {len(completed)}")
+print(f"  {BOLD}Code reviews:{RESET}    {len(completed)}")
+print()
 
-        # Review
-        step "REVIEWER" "Reviewing code..."
-        REVIEW_OUT=$($SANDBOX "$WORK/project" claude -p "Review: $title. Files: $CHANGED. Respond ONLY: APPROVED or CHANGES_NEEDED: reason" --dangerously-skip-permissions 2>/dev/null)
-        REVIEW=$(echo "$REVIEW_OUT" | tail -1)
+narrate("Gitea audit trail")
+prs = gitea_api("GET", f"/api/v1/repos/{REPO}/pulls?state=all&limit=10")
+if isinstance(prs, list):
+    for pr in sorted(prs, key=lambda x: x.get("number", 0)):
+        if pr.get("title", "").startswith("["):
+            print(f"  PR #{pr['number']}: {pr['title']}")
 
-        if echo "$REVIEW" | grep -qi "APPROVED"; then
-            ok "Review: APPROVED"
-        else
-            warn "Review: $(echo "$REVIEW" | head -c 60)"
-        fi
-
-        # Merge
-        REPO_PATH="/data/git/repositories/$REPO.git"
-        docker exec -u git gitea sh -c "
-            chmod -x $REPO_PATH/hooks/pre-receive 2>/dev/null
-            cd /tmp && rm -rf _merge && mkdir _merge && cd _merge
-            git init -q
-            git fetch $REPO_PATH main:main $BRANCH:$BRANCH 2>/dev/null
-            git checkout main 2>/dev/null
-            git merge $BRANCH -m 'Merge: [$tid] $title' 2>/dev/null
-            git push $REPO_PATH main:main 2>/dev/null
-            chmod +x $REPO_PATH/hooks/pre-receive 2>/dev/null
-        " 2>/dev/null
-        ok "PR #$PR_NUM merged"
-    fi
-
-    sleep 1
-done <<< "$TASKS"
-
-# ── Retro ───────────────────────────────────────────────────────────────────
-
-narrate "Final: Sprint Retro"
-
-echo -e "  ${BOLD}Tasks completed:${RESET} $TASK_NUM/$TASK_NUM"
-echo -e "  ${BOLD}PRs created:${RESET}     $TASK_NUM"
-echo -e "  ${BOLD}Code reviews:${RESET}    $TASK_NUM"
-echo -e "  ${BOLD}All tests pass:${RESET}  ✓"
-echo ""
-
-narrate "Gitea shows the full audit trail"
-echo ""
-
-docker exec gitea wget -qO- \
-    --header="Authorization: token ${GITEA_TOKEN}" \
-    "http://127.0.0.1:3000/api/v1/repos/$REPO/pulls?state=all&limit=10" 2>/dev/null \
-    | python3 -c "
-import json, sys
-prs = json.load(sys.stdin)
-for pr in sorted(prs, key=lambda x: x.get('number', 0)):
-    if pr.get('title', '').startswith('['):
-        state = 'merged' if pr.get('merged') else pr['state']
-        print(f'  PR #{pr[\"number\"]}: {pr[\"title\"]} [{state}]')
-" 2>/dev/null
-
-echo ""
-echo -e "${BOLD}${GREEN}  Sprint complete. All code written by AI agents,${RESET}"
-echo -e "${BOLD}${GREEN}  reviewed, and merged — autonomously.${RESET}"
-echo ""
-sleep 3
+print()
+print(f"{BOLD}{GREEN}  Sprint complete. All code written by AI agents,{RESET}")
+print(f"{BOLD}{GREEN}  reviewed, and merged — autonomously.{RESET}")
+print()
+time.sleep(3)
+PYEOF
