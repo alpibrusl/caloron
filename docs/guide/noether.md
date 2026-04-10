@@ -1,6 +1,6 @@
 # Noether Integration
 
-[Noether](https://github.com/solv-noether/noether) is a verified composition platform. Caloron agents use it for reproducible, type-checked computations.
+[Noether](https://github.com/alpibrusl/noether) is a verified composition platform. Caloron agents use it for reproducible, type-checked computations.
 
 ## What Noether Does
 
