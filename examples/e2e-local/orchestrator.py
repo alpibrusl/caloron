@@ -20,6 +20,7 @@ from agent_versioning import AgentVersionStore, auto_evolve_agents, print_agent_
 from skill_store import SkillStore
 from hr_agent import run_hr_agent, print_assignments
 from agent_configurator import configure_agent, print_config_summary
+from template_store import scaffold_project
 
 # ── Config ──────────────────────────────────────────────────────────────────
 
@@ -743,6 +744,12 @@ Keep to 2-3 tasks. Tests depend on implementation."""
             print(f"  Task: {tid} — {title}")
             print(f"  Issue: #{issue_num} | Framework: {framework}")
             print(f"{'=' * 50}")
+
+            # Scaffold project from template (if first task and project is empty)
+            task_text = f"{task.get('title', '')} {task.get('agent_prompt', '')}"
+            scaffold = scaffold_project(project, task.get("skills", []), task_text)
+            if scaffold.get("files"):
+                print(f"  Scaffold: {scaffold['template_name']} ({len(scaffold['files'])} files)")
 
             # Configure the agent's worktree with skill-specific files
             config_result = configure_agent(project, task, framework)
