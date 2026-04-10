@@ -17,6 +17,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from agent_versioning import AgentVersionStore, auto_evolve_agents, print_agent_history
+from skill_store import SkillStore
+from hr_agent import run_hr_agent, print_assignments
 
 # ── Config ──────────────────────────────────────────────────────────────────
 
@@ -658,6 +660,13 @@ Keep to 2-3 tasks. Tests depend on implementation."""
     for t in tasks:
         deps = ", ".join(t.get("depends_on", [])) or "none"
         print(f"  {t['id']}: {t['title']} (deps: {deps})")
+
+    # ── Step 1.5: HR Agent assigns skills ───────────────────────────────
+    print()
+    print("--- HR Agent: Assigning skills ---")
+    skill_store = SkillStore(os.path.join(WORK, "skill_store.json"))
+    tasks = run_hr_agent(tasks, skill_store, preferred_framework="claude-code")
+    print_assignments(tasks)
 
     # Register agents in version store (or load existing versions)
     print()
