@@ -14,7 +14,7 @@ polling_interval_seconds = 5
 enabled = true
 endpoint = ""
 # Path to noether binary — defaults to "noether" from PATH
-# binary = "/home/alpibru/workspace/solv-noether/target/debug/noether"
+# binary = "/home/alpibru/workspace/noether/target/debug/noether"
 
 [supervisor]
 stall_default_threshold_minutes = 20
